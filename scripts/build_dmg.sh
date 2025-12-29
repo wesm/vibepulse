@@ -13,6 +13,8 @@ APP_DIR="$DIST_DIR/${APP_NAME}.app"
 APP_ICON="$ROOT_DIR/assets/VibePulse.icns"
 STAGING_DIR="$DIST_DIR/staging"
 DMG_NAME="${APP_NAME}-${VERSION}.dmg"
+SIGN_IDENTITY="${SIGN_IDENTITY:-}"
+ENTITLEMENTS_PATH="${ENTITLEMENTS_PATH:-}"
 
 rm -rf "$DIST_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
@@ -55,6 +57,15 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
+
+if [ -n "$SIGN_IDENTITY" ]; then
+  if [ -n "$ENTITLEMENTS_PATH" ]; then
+    codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS_PATH" --sign "$SIGN_IDENTITY" "$APP_DIR"
+  else
+    codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$APP_DIR"
+  fi
+  codesign --verify --deep --strict --verbose=2 "$APP_DIR"
+fi
 
 rm -rf "$STAGING_DIR"
 mkdir -p "$STAGING_DIR"
