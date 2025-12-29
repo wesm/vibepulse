@@ -38,6 +38,7 @@ struct MenuContentView: View {
         .frame(width: 360)
         .onAppear {
             disableWindowResizing()
+            model.refreshNow()
         }
     }
 

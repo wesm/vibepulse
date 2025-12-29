@@ -72,7 +72,7 @@ final class AppModel: ObservableObject {
         } else if let legacyMinutes = defaults.object(forKey: DefaultsKey.refreshMinutes) as? Double {
             refreshInterval = Self.intervalFromLegacy(minutes: legacyMinutes)
         } else {
-            refreshInterval = .fiveMinutes
+            refreshInterval = .fifteenMinutes
         }
         let storedMode = defaults.string(forKey: DefaultsKey.maintenanceMode)
         maintenanceMode = MaintenanceMode(rawValue: storedMode ?? "") ?? .automatic
@@ -118,6 +118,14 @@ final class AppModel: ObservableObject {
         let todayKey = DateHelper.dateKey(for: Date())
 
         DispatchQueue.global(qos: .background).async { [fetcher, store] in
+            guard NetworkMonitor.isOnline() else {
+                DispatchQueue.main.async {
+                    self.statusMessage = "No internet connection."
+                    self.isRefreshing = false
+                }
+                return
+            }
+
             var errors: [String] = []
 
             for tool in tools {
