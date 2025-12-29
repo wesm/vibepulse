@@ -10,9 +10,21 @@ struct SettingsView: View {
                 Toggle("Codex", isOn: $model.includeCodex)
             }
 
+
+            Section("Startup") {
+                Toggle("Start at login", isOn: $model.startAtLogin)
+                if let message = model.loginItemMessage {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+
             Section("Refresh") {
-                Stepper(value: $model.refreshMinutes, in: 5...15, step: 1) {
-                    Text("Every \(Int(model.refreshMinutes)) minutes")
+                Picker("Frequency", selection: $model.refreshInterval) {
+                    ForEach(RefreshInterval.allCases) { interval in
+                        Text(interval.title).tag(interval)
+                    }
                 }
                 Button("Refresh Now") {
                     model.refreshNow()

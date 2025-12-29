@@ -3,7 +3,7 @@ import SwiftUI
 
 struct UsageChartView: View {
     let mode: ChartMode
-    let hourlySeries: [UsageSeriesPoint]
+    let cumulativeSeries: [UsageSeriesPoint]
     let dailySeries: [UsageSeriesPoint]
 
     var body: some View {
@@ -17,10 +17,10 @@ struct UsageChartView: View {
 
     private var todayChart: some View {
         Group {
-            if hourlySeries.isEmpty {
+            if cumulativeSeries.isEmpty {
                 EmptyStateView(message: "Collecting samples for today.")
             } else {
-                Chart(hourlySeries) { point in
+                Chart(cumulativeSeries) { point in
                     LineMark(
                         x: .value("Time", point.date),
                         y: .value("Cost", point.cost)

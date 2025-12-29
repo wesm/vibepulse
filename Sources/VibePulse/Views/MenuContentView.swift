@@ -3,7 +3,6 @@ import SwiftUI
 
 struct MenuContentView: View {
     @EnvironmentObject private var model: AppModel
-    @Environment(\.openWindow) private var openWindow
     @State private var chartMode: ChartMode = .today
 
     var body: some View {
@@ -17,7 +16,11 @@ struct MenuContentView: View {
             }
             .pickerStyle(.segmented)
 
-            UsageChartView(mode: chartMode, hourlySeries: model.hourlySeries, dailySeries: model.dailySeries)
+            Text(chartMode == .today ? "Cumulative" : "By Day")
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            UsageChartView(mode: chartMode, cumulativeSeries: model.cumulativeSeries, dailySeries: model.dailySeries)
 
             totalsBreakdown
 
@@ -33,6 +36,9 @@ struct MenuContentView: View {
         }
         .padding(12)
         .frame(width: 360)
+        .onAppear {
+            disableWindowResizing()
+        }
     }
 
     private var header: some View {
@@ -88,7 +94,7 @@ struct MenuContentView: View {
             .disabled(model.isRefreshing)
 
             Button("Settings") {
-                openWindow(id: "settings")
+                model.openSettings()
             }
 
             Spacer()
@@ -99,6 +105,12 @@ struct MenuContentView: View {
         }
         .buttonStyle(.borderless)
         .font(.caption)
+    }
+
+    private func disableWindowResizing() {
+        if let window = NSApp.keyWindow {
+            window.styleMask.remove(.resizable)
+        }
     }
 
     private var combinedTotalText: String {
@@ -114,9 +126,9 @@ struct MenuContentView: View {
     private var combinedTotalSubtitle: String {
         switch chartMode {
         case .today:
-            return "Combined today"
+            return "Combined today via ccusage"
         case .thirtyDays:
-            return "Combined (last 30 days)"
+            return "Combined (last 30 days) via ccusage"
         }
     }
 

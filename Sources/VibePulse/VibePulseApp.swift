@@ -19,10 +19,5 @@ struct VibePulseApp: App {
         .menuBarExtraStyle(.window)
         .windowResizability(.contentSize)
 
-        Window("Settings", id: "settings") {
-            SettingsView()
-                .environmentObject(model)
-        }
-        .windowResizability(.contentSize)
     }
 }

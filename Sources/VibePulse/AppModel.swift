@@ -1,9 +1,11 @@
 import Foundation
+import ServiceManagement
 
 @MainActor
 final class AppModel: ObservableObject {
     @Published var menuTotalText: String = Formatters.currencyString(0)
     @Published var hourlySeries: [UsageSeriesPoint] = []
+    @Published var cumulativeSeries: [UsageSeriesPoint] = []
     @Published var dailySeries: [UsageSeriesPoint] = []
     @Published var toolTotals: [ToolTotal] = []
     @Published var lastUpdated: Date?
@@ -20,6 +22,12 @@ final class AppModel: ObservableObject {
     }
     @Published var lastMaintenanceAt: Date?
     @Published var maintenanceMessage: String?
+    @Published var startAtLogin: Bool {
+        didSet {
+            setStartAtLogin(enabled: startAtLogin)
+        }
+    }
+    @Published var loginItemMessage: String?
 
     @Published var includeClaude: Bool {
         didSet {
@@ -35,27 +43,41 @@ final class AppModel: ObservableObject {
         }
     }
 
-    @Published var refreshMinutes: Double {
+    @Published var refreshInterval: RefreshInterval {
         didSet {
-            defaults.set(refreshMinutes, forKey: DefaultsKey.refreshMinutes)
+            defaults.set(refreshInterval.rawValue, forKey: DefaultsKey.refreshInterval)
             scheduleTimer()
         }
     }
 
     private let defaults = UserDefaults.standard
     private let fetcher = UsageFetcher()
+    private let settingsWindowController = SettingsWindowController()
     private var timer: DispatchSourceTimer?
+    private var isUpdatingLoginItem = false
     private let store: UsageStore
 
     init() {
         includeClaude = defaults.object(forKey: DefaultsKey.includeClaude) as? Bool ?? true
         includeCodex = defaults.object(forKey: DefaultsKey.includeCodex) as? Bool ?? true
-        let storedInterval = defaults.object(forKey: DefaultsKey.refreshMinutes) as? Double
-        refreshMinutes = storedInterval ?? 10
+        let storedInterval = defaults.string(forKey: DefaultsKey.refreshInterval)
+        if let storedInterval, let interval = RefreshInterval(rawValue: storedInterval) {
+            refreshInterval = interval
+        } else if let legacyMinutes = defaults.object(forKey: DefaultsKey.refreshMinutes) as? Double {
+            refreshInterval = Self.intervalFromLegacy(minutes: legacyMinutes)
+        } else {
+            refreshInterval = .fiveMinutes
+        }
         let storedMode = defaults.string(forKey: DefaultsKey.maintenanceMode)
         maintenanceMode = MaintenanceMode(rawValue: storedMode ?? "") ?? .automatic
         if let storedMaintenance = defaults.object(forKey: DefaultsKey.lastMaintenanceAt) as? Double {
             lastMaintenanceAt = Date(timeIntervalSince1970: storedMaintenance)
+        }
+
+        startAtLogin = Self.currentLoginItemEnabled()
+
+        if SMAppService.mainApp.status == .requiresApproval {
+            loginItemMessage = "Enable VibePulse in System Settings > Login Items."
         }
 
         do {
@@ -114,6 +136,10 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func openSettings() {
+        settingsWindowController.show(model: self)
+    }
+
     private var activeTools: [UsageTool] {
         UsageTool.allCases.filter { tool in
             switch tool {
@@ -137,6 +163,14 @@ final class AppModel: ObservableObject {
         }
 
         hourlySeries = hourlyPoints.sorted { $0.date < $1.date }
+        var cumulativePoints: [UsageSeriesPoint] = []
+
+        for tool in tools {
+            let samples = store.fetchSamples(tool: tool, from: startOfDay, to: now).sorted { $0.recordedAt < $1.recordedAt }
+            cumulativePoints.append(contentsOf: samples.map { UsageSeriesPoint(tool: tool, date: $0.recordedAt, cost: $0.totalCost) })
+        }
+
+        cumulativeSeries = cumulativePoints.sorted { $0.date < $1.date }
 
         let sinceKey = DateHelper.dateKeyDaysAgo(29)
         let rollups = store.fetchDailyRollups(since: sinceKey)
@@ -197,10 +231,56 @@ final class AppModel: ObservableObject {
         runMaintenance(force: false)
     }
 
+    private static func intervalFromLegacy(minutes: Double) -> RefreshInterval {
+        switch minutes {
+        case ..<10:
+            return .fiveMinutes
+        case ..<30:
+            return .fifteenMinutes
+        case ..<120:
+            return .oneHour
+        case ..<600:
+            return .fourHours
+        default:
+            return .oneDay
+        }
+    }
+
+    private static func currentLoginItemEnabled() -> Bool {
+        switch SMAppService.mainApp.status {
+        case .enabled, .requiresApproval:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func setStartAtLogin(enabled: Bool) {
+        guard !isUpdatingLoginItem else { return }
+        isUpdatingLoginItem = true
+        defer { isUpdatingLoginItem = false }
+
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+            if SMAppService.mainApp.status == .requiresApproval {
+                loginItemMessage = "Enable VibePulse in System Settings > Login Items."
+            } else {
+                loginItemMessage = nil
+            }
+        } catch {
+            loginItemMessage = "Login item update failed: \(error.localizedDescription)"
+            startAtLogin = Self.currentLoginItemEnabled()
+        }
+    }
+
     private func scheduleTimer() {
         timer?.cancel()
         let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .background))
-        let intervalSeconds = max(60, Int(refreshMinutes * 60))
+        let intervalSeconds = max(60, refreshInterval.seconds)
         timer.schedule(deadline: .now() + .seconds(5), repeating: .seconds(intervalSeconds))
         timer.setEventHandler { [weak self] in
             Task { @MainActor in
@@ -215,6 +295,7 @@ final class AppModel: ObservableObject {
         static let includeClaude = "includeClaude"
         static let includeCodex = "includeCodex"
         static let refreshMinutes = "refreshMinutes"
+        static let refreshInterval = "refreshInterval"
         static let maintenanceMode = "maintenanceMode"
         static let lastMaintenanceAt = "lastMaintenanceAt"
     }
