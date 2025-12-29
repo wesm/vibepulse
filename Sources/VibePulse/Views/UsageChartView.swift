@@ -35,6 +35,7 @@ struct UsageChartView: View {
                     .foregroundStyle(by: .value("Tool", point.tool.displayName))
                     .opacity(0.6)
                 }
+                .chartLegend(.hidden)
                 .chartForegroundStyleScale(colorScale)
                 .chartYAxis {
                     AxisMarks(position: .leading) { value in
@@ -74,6 +75,7 @@ struct UsageChartView: View {
                     .foregroundStyle(by: .value("Tool", point.tool.displayName))
                     .position(by: .value("Tool", point.tool.displayName))
                 }
+                .chartLegend(.hidden)
                 .chartForegroundStyleScale(colorScale)
                 .chartYAxis {
                     AxisMarks(position: .leading) { value in

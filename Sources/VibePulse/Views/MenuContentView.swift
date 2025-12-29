@@ -96,7 +96,7 @@ struct MenuContentView: View {
                     Circle()
                         .fill(total.tool.color)
                         .frame(width: 8, height: 8)
-                    Text("\(total.tool.shortName) \(Formatters.currencyString(total.totalCost))")
+                    Text("\(total.tool.displayName) \(Formatters.currencyString(total.totalCost))")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
