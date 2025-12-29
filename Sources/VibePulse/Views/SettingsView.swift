@@ -20,6 +20,13 @@ struct SettingsView: View {
                 }
             }
 
+            Section("Dependencies") {
+                TextField("npx path (optional)", text: $model.npxPath)
+                Text("Leave blank to auto-detect. Example: /opt/homebrew/bin/npx")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
             Section("Refresh") {
                 Picker("Frequency", selection: $model.refreshInterval) {
                     ForEach(RefreshInterval.allCases) { interval in

@@ -9,7 +9,7 @@ struct WelcomeView: View {
             Text("Welcome to VibePulse")
                 .font(.title2)
 
-            Text("VibePulse reads your Claude Code and Codex usage via the ccusage tools. Make sure Node.js is installed so it can run npx.")
+            Text("VibePulse reads your Claude Code and Codex usage via the ccusage tools. Make sure Node.js is installed so it can run npx. You can set a custom npx path in Settings.")
                 .font(.callout)
                 .foregroundColor(.secondary)
 

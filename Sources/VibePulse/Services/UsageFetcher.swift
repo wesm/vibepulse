@@ -4,6 +4,7 @@ final class UsageFetcher: @unchecked Sendable {
     enum FetchError: Error {
         case commandFailed(String)
         case invalidOutput
+        case npxNotFound(String?)
     }
 
     func fetchDailyTotals(for tool: UsageTool) throws -> [DailyTotal] {
@@ -12,9 +13,11 @@ final class UsageFetcher: @unchecked Sendable {
     }
 
     private func runCommand(_ arguments: [String]) throws -> Data {
+        let (executableURL, resolvedArguments) = try resolveCommand(arguments: arguments)
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = arguments
+        process.executableURL = executableURL
+        process.arguments = resolvedArguments
+        process.environment = buildEnvironment()
 
         let outputPipe = Pipe()
         let errorPipe = Pipe()
@@ -34,6 +37,77 @@ final class UsageFetcher: @unchecked Sendable {
         }
 
         return data
+    }
+
+    private func resolveCommand(arguments: [String]) throws -> (URL, [String]) {
+        guard let first = arguments.first else {
+            return (URL(fileURLWithPath: "/usr/bin/env"), arguments)
+        }
+
+        if first == "npx" {
+            if let override = UserDefaults.standard.string(forKey: "npxPath"), !override.isEmpty {
+                if FileManager.default.isExecutableFile(atPath: override) {
+                    return (URL(fileURLWithPath: override), Array(arguments.dropFirst()))
+                }
+                throw FetchError.npxNotFound(override)
+            }
+
+            if let npxPath = resolveNpxExecutable() {
+                return (URL(fileURLWithPath: npxPath), Array(arguments.dropFirst()))
+            }
+
+            throw FetchError.npxNotFound(nil)
+        }
+
+        return (URL(fileURLWithPath: "/usr/bin/env"), arguments)
+    }
+
+    private func resolveNpxExecutable() -> String? {
+        let candidates = [
+            "/opt/homebrew/bin/npx",
+            "/usr/local/bin/npx",
+            "/usr/bin/npx",
+        ]
+        for path in candidates {
+            if FileManager.default.isExecutableFile(atPath: path) {
+                return path
+            }
+        }
+
+        let paths = buildSearchPaths()
+        for directory in paths {
+            let path = (directory as NSString).appendingPathComponent("npx")
+            if FileManager.default.isExecutableFile(atPath: path) {
+                return path
+            }
+        }
+
+        return nil
+    }
+
+    private func buildEnvironment() -> [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+        environment["PATH"] = buildSearchPaths().joined(separator: ":")
+        return environment
+    }
+
+    private func buildSearchPaths() -> [String] {
+        let defaultPaths = [
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin",
+        ]
+        let existing = ProcessInfo.processInfo.environment["PATH"]?.split(separator: ":").map(String.init) ?? []
+        var combined: [String] = []
+        for path in defaultPaths + existing {
+            if !combined.contains(path) {
+                combined.append(path)
+            }
+        }
+        return combined
     }
 
     private func parseDailyTotals(for tool: UsageTool, data: Data) throws -> [DailyTotal] {
@@ -86,6 +160,11 @@ extension UsageFetcher.FetchError: LocalizedError {
             return output.isEmpty ? "Usage command failed." : output
         case .invalidOutput:
             return "Usage command returned invalid JSON."
+        case .npxNotFound(let override):
+            if let override {
+                return "npx not found at \(override). Update the path in Settings or install Node.js."
+            }
+            return "npx not found. Install Node.js or set the npx path in Settings."
         }
     }
 }

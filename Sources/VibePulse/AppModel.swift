@@ -17,9 +17,6 @@ final class AppModel: ObservableObject {
             defaults.set(maintenanceMode.rawValue, forKey: DefaultsKey.maintenanceMode)
             if maintenanceMode == .automatic {
                 runMaintenanceIfNeeded()
-        DispatchQueue.main.async {
-            self.showWelcomeIfNeeded()
-        }
             }
         }
     }
@@ -31,6 +28,11 @@ final class AppModel: ObservableObject {
         }
     }
     @Published var loginItemMessage: String?
+    @Published var npxPath: String {
+        didSet {
+            defaults.set(npxPath, forKey: DefaultsKey.npxPath)
+        }
+    }
 
     @Published var includeClaude: Bool {
         didSet {
@@ -78,6 +80,7 @@ final class AppModel: ObservableObject {
             lastMaintenanceAt = Date(timeIntervalSince1970: storedMaintenance)
         }
 
+        npxPath = defaults.string(forKey: DefaultsKey.npxPath) ?? ""
         startAtLogin = Self.currentLoginItemEnabled()
 
         if SMAppService.mainApp.status == .requiresApproval {
@@ -312,6 +315,7 @@ final class AppModel: ObservableObject {
         static let includeCodex = "includeCodex"
         static let refreshMinutes = "refreshMinutes"
         static let refreshInterval = "refreshInterval"
+        static let npxPath = "npxPath"
         static let maintenanceMode = "maintenanceMode"
         static let lastMaintenanceAt = "lastMaintenanceAt"
     }
