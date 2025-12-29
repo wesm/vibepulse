@@ -21,8 +21,8 @@ final class HourlyUsageInfererTests: XCTestCase {
             byHour[hour] = point.cost
         }
 
-        XCTAssertEqual(byHour[0], 10, accuracy: 0.001)
-        XCTAssertEqual(byHour[1], 10, accuracy: 0.001)
-        XCTAssertEqual(byHour[2], 10, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(byHour[0]), 10, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(byHour[1]), 10, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(byHour[2]), 10, accuracy: 0.001)
     }
 }
