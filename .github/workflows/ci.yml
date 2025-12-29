@@ -12,6 +12,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install swift-format
+        run: brew install swift-format
+
+      - name: Lint
+        run: swift-format lint --configuration .swift-format --recursive Sources Tests
+
       - name: Build
         run: swift build
 
