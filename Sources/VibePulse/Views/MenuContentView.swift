@@ -153,14 +153,14 @@ struct MenuContentView: View {
     private var toolBreakdown: [ToolTotal] {
         switch chartMode {
         case .today:
-            return model.toolTotals
+            return model.toolTotals.filter { $0.totalCost > 0.0001 }
         case .thirtyDays:
             var totalsByTool: [UsageTool: Double] = [:]
             for point in model.dailySeries {
                 totalsByTool[point.tool, default: 0] += point.cost
             }
             return UsageTool.allCases.compactMap { tool in
-                guard let total = totalsByTool[tool] else { return nil }
+                guard let total = totalsByTool[tool], total > 0.0001 else { return nil }
                 return ToolTotal(tool: tool, totalCost: total)
             }
         }

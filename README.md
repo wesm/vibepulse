@@ -1,14 +1,14 @@
 # VibePulse
 
-VibePulse is a lightweight macOS menu bar app that shows your Claude Code + Codex token spend, powered by the `ccusage` tools.
+VibePulse is a macOS menu bar app that tracks Claude Code + Codex token spend using the `ccusage` tools.
 
-## What you get
+## Highlights
 
-- Menu bar total for today (combined across Claude Code and Codex)
-- Cumulative spend chart for today
-- 30‑day daily totals with per‑tool breakdown
-- Background refresh on a configurable schedule
-- Data maintenance tools to normalize historical imports
+- Combined daily total in the menu bar
+- Today view shows cumulative spend over the day
+- 30-day view shows daily totals with per-tool breakdown
+- Configurable refresh schedule
+- Built-in data maintenance for historical imports
 
 ## Screenshots
 
@@ -20,10 +20,23 @@ Add screenshots in `docs/screenshots/` and reference them here.
 - Node.js (VibePulse runs `npx ccusage@latest` and `npx @ccusage/codex@latest`)
 - Claude Code and/or Codex usage logs on disk
 
+## Install
+
+1. Download the latest `.dmg` from GitHub Releases.
+2. Drag `VibePulse.app` to your Applications folder.
+3. Launch it. If macOS blocks the app, open System Settings -> Privacy & Security and allow it.
+
+
+Note: Releases are currently unsigned. Signed and notarized builds are planned.
+
+## First run
+
+- A welcome window explains the Node.js requirement and lets you toggle start at login.
+- You can revisit Settings from the menu bar at any time.
 
 ## Node.js / npx setup
 
-VibePulse runs outside your shell, so it won't see `nvm`'s PATH unless you tell it where `npx` lives.
+VibePulse runs outside your shell, so it will not see `nvm`'s PATH unless you set an explicit `npx` path.
 
 Recommended (least friction for menu bar apps):
 
@@ -41,32 +54,30 @@ If you use `nvm`:
 command -v npx
 ```
 
-2. In VibePulse, open **Settings → Dependencies** and paste that path into **npx path**.
+2. In VibePulse, open **Settings -> Dependencies** and paste that path into **npx path**.
 
 If you change your active Node version in `nvm`, update the path in Settings.
-## Install
-
-1. Download the latest `.dmg` from GitHub Releases.
-2. Drag `VibePulse.app` to your Applications folder.
-3. Launch it (macOS Gatekeeper will warn for unsigned builds).
-
-## First run
-
-- VibePulse shows a welcome window with the Node.js requirement and a start‑at‑login toggle.
-- You can revisit settings any time from the menu bar.
 
 ## Settings
 
 - **Data Sources**: Enable Claude Code and/or Codex.
 - **Startup**: Start VibePulse at login (macOS may require approval).
+- **Dependencies**: Set a custom `npx` path if needed.
 - **Refresh**: Choose how often the app refreshes (5m, 15m, 1h, 4h, 1d).
 - **Data Maintenance**: Normalize historical data and rerun import fixes.
 
-## Data & privacy
+## Security & privacy
 
-- All data stays local.
+- All usage data stays local on your machine.
 - The database lives at `~/Library/Application Support/VibePulse/vibepulse.sqlite`.
-- VibePulse only reads local logs and runs `ccusage`/`@ccusage/codex` via `npx`.
+- VibePulse has no analytics and does not phone home.
+- It runs the local `ccusage` tools via `npx` to read your logs.
+
+## Troubleshooting
+
+- **No data**: Run `npx ccusage@latest` or `npx @ccusage/codex@latest` in Terminal to verify logs exist.
+- **npx not found**: Install Node via Homebrew or set the `npx` path in Settings -> Dependencies.
+- **Start at login**: macOS may require approval in System Settings -> Login Items.
 
 ## Local development
 
@@ -81,11 +92,6 @@ scripts/build_dmg.sh v0.1.0
 ```
 
 The DMG will be created in `dist/`.
-
-## Troubleshooting
-
-- **No data**: Run `npx ccusage@latest` or `npx @ccusage/codex@latest` in Terminal to verify logs exist.
-- **Start at login**: macOS might require approval in System Settings → Login Items.
 
 ## License
 
