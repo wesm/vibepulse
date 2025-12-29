@@ -12,9 +12,10 @@ VibePulse is a macOS menu bar app that tracks Claude Code + Codex token spend us
 
 ## Screenshots
 
-![Today view](docs/screenshots/vibepulse_today.png)
-
-![30-day view](docs/screenshots/vibepulse_30day.png)
+<p align="center">
+  <img src="docs/screenshots/vibepulse_today.png" alt="Today view" width="48%" />
+  <img src="docs/screenshots/vibepulse_30day.png" alt="30-day view" width="48%" />
+</p>
 
 ## Requirements
 
@@ -33,7 +34,9 @@ Note: Releases are currently unsigned. Signed and notarized builds are planned.
 
 ## First run
 
-![Welcome](docs/screenshots/vibepulse_welcome.png)
+<p align="center">
+  <img src="docs/screenshots/vibepulse_welcome.png" alt="Welcome" width="50%" />
+</p>
 
 - A welcome window explains the Node.js requirement, notes the default 15-minute refresh cadence, and lets you toggle start at login.
 - You can revisit Settings from the menu bar at any time.
