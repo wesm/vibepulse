@@ -1,4 +1,3 @@
-import AppKit
 import Foundation
 
 @MainActor
@@ -113,11 +112,6 @@ final class AppModel: ObservableObject {
                 self.isRefreshing = false
             }
         }
-    }
-
-    func openSettings() {
-        NSApp.activate(ignoringOtherApps: true)
-        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
     }
 
     private var activeTools: [UsageTool] {

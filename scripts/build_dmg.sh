@@ -5,6 +5,7 @@ APP_NAME="VibePulse"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION_RAW="${1:-dev}"
 VERSION="${VERSION_RAW#v}"
+GIT_HASH="$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 
 BUILD_DIR="$ROOT_DIR/.build"
 DIST_DIR="$ROOT_DIR/dist"
@@ -36,6 +37,8 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
   <string>${VERSION}</string>
   <key>CFBundleVersion</key>
   <string>${VERSION}</string>
+  <key>VPGitHash</key>
+  <string>${GIT_HASH}</string>
   <key>LSMinimumSystemVersion</key>
   <string>13.0</string>
   <key>LSUIElement</key>

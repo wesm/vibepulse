@@ -51,6 +51,20 @@ struct SettingsView: View {
                         .foregroundColor(.secondary)
                 }
             }
+
+            Section("About") {
+                Text(AppInfo.displayName)
+                    .font(.headline)
+                Text("Version \(AppInfo.version)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Text("Git \(AppInfo.gitHash)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Text("Copyright (c) \(AppInfo.currentYear) Wes McKinney")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
         }
         .padding(20)
         .frame(width: 360)

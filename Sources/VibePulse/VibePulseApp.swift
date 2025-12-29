@@ -17,10 +17,12 @@ struct VibePulseApp: App {
             MenuBarLabelView(totalText: model.menuTotalText)
         }
         .menuBarExtraStyle(.window)
+        .windowResizability(.contentSize)
 
-        Settings {
+        Window("Settings", id: "settings") {
             SettingsView()
                 .environmentObject(model)
         }
+        .windowResizability(.contentSize)
     }
 }
