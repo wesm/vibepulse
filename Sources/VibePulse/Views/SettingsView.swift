@@ -27,20 +27,25 @@ struct SettingsView: View {
                     .foregroundColor(.secondary)
             }
 
-            Section("Refresh") {
-                Picker("Frequency", selection: $model.refreshInterval) {
-                    ForEach(RefreshInterval.allCases) { interval in
-                        Text(interval.title).tag(interval)
+            Section {
+                HStack {
+                    Picker("Update Frequency", selection: $model.refreshInterval) {
+                        ForEach(RefreshInterval.allCases) { interval in
+                            Text(interval.title).tag(interval)
+                        }
                     }
+
+                    Spacer()
+
+                    Button("Refresh Now") {
+                        model.refreshNow()
+                    }
+                    .disabled(model.isRefreshing)
                 }
-                Button("Refresh Now") {
-                    model.refreshNow()
-                }
-                .disabled(model.isRefreshing)
             }
 
-            Section("Data Maintenance") {
-                Picker("Mode", selection: $model.maintenanceMode) {
+            Section {
+                Picker("Data Maintenance", selection: $model.maintenanceMode) {
                     ForEach(MaintenanceMode.allCases) { mode in
                         Text(mode.title).tag(mode)
                     }
