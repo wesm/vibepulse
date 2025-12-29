@@ -104,15 +104,6 @@ scripts/build_dmg.sh v0.1.0
 
 The DMG will be created in `dist/`.
 
-## Local release (signed + notarized)
-
-```bash
-SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
-NOTARY_PROFILE="VibePulseNotary" \
-scripts/release_local.sh v0.1.0
-```
-
-This signs the app, notarizes the DMG, staples it, and publishes a GitHub release using `gh`.
 
 ## License
 
