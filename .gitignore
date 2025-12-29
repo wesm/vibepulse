@@ -1,0 +1,24 @@
+.DS_Store
+
+# SwiftPM
+.build/
+.swiftpm/
+
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+DerivedData/
+*.xcuserstate
+*.xcuserdata/
+*.xcscmblueprint
+
+# Swift playgrounds
+*.xcplayground
+.timeline
+
+# App artifacts
+*.app
+*.dSYM
+
+# Logs
+*.log
