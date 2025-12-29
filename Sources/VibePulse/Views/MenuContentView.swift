@@ -49,16 +49,34 @@ struct MenuContentView: View {
             Text("VibePulse")
                 .font(.headline)
             Spacer()
-            if model.isRefreshing {
-                ProgressView()
-                    .scaleEffect(0.7)
-            } else if let lastUpdated = model.lastUpdated {
+            statusIndicator
+        }
+    }
+
+    private var statusIndicator: some View {
+        ZStack(alignment: .trailing) {
+            if let lastUpdated = model.lastUpdated {
                 Text(lastUpdated, format: .dateTime.hour().minute())
                     .font(.caption)
                     .foregroundColor(.secondary)
+                    .opacity(model.isRefreshing ? 0 : 1)
+                    .monospacedDigit()
+            } else {
+                Text(" ")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .opacity(0)
+            }
+
+            if model.isRefreshing {
+                ProgressView()
+                    .scaleEffect(0.7)
             }
         }
+        .frame(width: 70, height: 16, alignment: .trailing)
+        .animation(.none, value: model.isRefreshing)
     }
+
 
     private var totalSection: some View {
         VStack(alignment: .leading, spacing: 4) {
