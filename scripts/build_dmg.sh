@@ -10,6 +10,8 @@ GIT_HASH="$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknow
 BUILD_DIR="$ROOT_DIR/.build"
 DIST_DIR="$ROOT_DIR/dist"
 APP_DIR="$DIST_DIR/${APP_NAME}.app"
+APP_ICON="$ROOT_DIR/assets/VibePulse.icns"
+STAGING_DIR="$DIST_DIR/staging"
 DMG_NAME="${APP_NAME}-${VERSION}.dmg"
 
 rm -rf "$DIST_DIR"
@@ -17,6 +19,11 @@ mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 
 swift build -c release --package-path "$ROOT_DIR"
 cp "$BUILD_DIR/release/$APP_NAME" "$APP_DIR/Contents/MacOS/$APP_NAME"
+if [ -f "$APP_ICON" ]; then
+  cp "$APP_ICON" "$APP_DIR/Contents/Resources/$APP_NAME.icns"
+else
+  echo "Warning: $APP_ICON not found; app icon will be missing."
+fi
 
 cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -31,6 +38,8 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
   <string>com.vibepulse.${APP_NAME}</string>
   <key>CFBundleExecutable</key>
   <string>${APP_NAME}</string>
+  <key>CFBundleIconFile</key>
+  <string>${APP_NAME}.icns</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
@@ -47,6 +56,10 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-hdiutil create -volname "$APP_NAME" -srcfolder "$APP_DIR" -ov -format UDZO "$DIST_DIR/$DMG_NAME"
+rm -rf "$STAGING_DIR"
+mkdir -p "$STAGING_DIR"
+cp -R "$APP_DIR" "$STAGING_DIR/$APP_NAME.app"
+ln -s /Applications "$STAGING_DIR/Applications"
+hdiutil create -volname "$APP_NAME" -srcfolder "$STAGING_DIR" -ov -format UDZO "$DIST_DIR/$DMG_NAME"
 
 echo "Created $DIST_DIR/$DMG_NAME"
