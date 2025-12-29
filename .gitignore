@@ -22,3 +22,6 @@ DerivedData/
 
 # Logs
 *.log
+
+# Release artifacts
+dist/
