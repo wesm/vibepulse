@@ -67,7 +67,9 @@ If you change your active Node version in `nvm`, update the path in Settings.
 
 ## Settings
 
-![Settings](docs/screenshots/vibepulse_settings.png)
+<p align="center">
+  <img src="docs/screenshots/vibepulse_settings.png" alt="Settings" width="50%" />
+</p>
 
 - **Data Sources**: Enable Claude Code and/or Codex.
 - **Startup**: Start VibePulse at login (macOS may require approval).
