@@ -1,10 +1,10 @@
 # VibePulse
 
-VibePulse is a macOS menu bar app that tracks Claude Code + Codex token spend using the `ccusage` tools.
+VibePulse is a macOS menu bar app that tracks Claude Code + Codex token spend using the [`ccusage`](https://github.com/ryoppippi/ccusage) tools.
 
 ## Highlights
 
-- Combined daily total in the menu bar
+- Combined daily total in the menu bar (what you would pay per token without a subscription)
 - Today view shows cumulative spend over the day
 - 30-day view shows daily totals with per-tool breakdown
 - Configurable refresh schedule
@@ -12,7 +12,9 @@ VibePulse is a macOS menu bar app that tracks Claude Code + Codex token spend us
 
 ## Screenshots
 
-Add screenshots in `docs/screenshots/` and reference them here.
+![Today view](docs/screenshots/vibepulse_today.png)
+
+![30-day view](docs/screenshots/vibepulse_30day.png)
 
 ## Requirements
 
@@ -31,7 +33,9 @@ Note: Releases are currently unsigned. Signed and notarized builds are planned.
 
 ## First run
 
-- A welcome window explains the Node.js requirement and lets you toggle start at login.
+![Welcome](docs/screenshots/vibepulse_welcome.png)
+
+- A welcome window explains the Node.js requirement, notes the default 15-minute refresh cadence, and lets you toggle start at login.
 - You can revisit Settings from the menu bar at any time.
 
 ## Node.js / npx setup
@@ -60,6 +64,8 @@ If you change your active Node version in `nvm`, update the path in Settings.
 
 ## Settings
 
+![Settings](docs/screenshots/vibepulse_settings.png)
+
 - **Data Sources**: Enable Claude Code and/or Codex.
 - **Startup**: Start VibePulse at login (macOS may require approval).
 - **Dependencies**: Set a custom `npx` path if needed.
@@ -70,7 +76,7 @@ If you change your active Node version in `nvm`, update the path in Settings.
 
 - All usage data stays local on your machine.
 - The database lives at `~/Library/Application Support/VibePulse/vibepulse.sqlite`.
-- VibePulse has no analytics and does not phone home.
+- VibePulse has no analytics or telemetry.
 - It runs the local `ccusage` tools via `npx` to read your logs.
 
 ## Troubleshooting
