@@ -17,6 +17,9 @@ final class AppModel: ObservableObject {
             defaults.set(maintenanceMode.rawValue, forKey: DefaultsKey.maintenanceMode)
             if maintenanceMode == .automatic {
                 runMaintenanceIfNeeded()
+        DispatchQueue.main.async {
+            self.showWelcomeIfNeeded()
+        }
             }
         }
     }
@@ -53,6 +56,7 @@ final class AppModel: ObservableObject {
     private let defaults = UserDefaults.standard
     private let fetcher = UsageFetcher()
     private let settingsWindowController = SettingsWindowController()
+    private let welcomeWindowController = WelcomeWindowController()
     private var timer: DispatchSourceTimer?
     private var isUpdatingLoginItem = false
     private let store: UsageStore
@@ -91,6 +95,9 @@ final class AppModel: ObservableObject {
         scheduleTimer()
         refreshNow()
         runMaintenanceIfNeeded()
+        DispatchQueue.main.async {
+            self.showWelcomeIfNeeded()
+        }
     }
 
     func refreshNow() {
@@ -132,6 +139,14 @@ final class AppModel: ObservableObject {
                 }
                 self.reloadFromStore()
                 self.isRefreshing = false
+            }
+        }
+    }
+
+    private func showWelcomeIfNeeded() {
+        if !defaults.bool(forKey: DefaultsKey.welcomeKey) {
+            welcomeWindowController.show(model: self) {
+                self.defaults.set(true, forKey: DefaultsKey.welcomeKey)
             }
         }
     }
@@ -292,6 +307,7 @@ final class AppModel: ObservableObject {
     }
 
     private enum DefaultsKey {
+        static let welcomeKey = "hasSeenWelcome"
         static let includeClaude = "includeClaude"
         static let includeCodex = "includeCodex"
         static let refreshMinutes = "refreshMinutes"

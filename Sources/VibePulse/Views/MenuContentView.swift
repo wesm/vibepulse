@@ -2,11 +2,9 @@ import AppKit
 import SwiftUI
 
 struct MenuContentView: View {
-    private static let welcomeKey = "hasSeenWelcome"
     @EnvironmentObject private var model: AppModel
     @State private var chartMode: ChartMode = .today
-    @State private var showWelcome = false
-
+    
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
@@ -40,14 +38,6 @@ struct MenuContentView: View {
         .frame(width: 360)
         .onAppear {
             disableWindowResizing()
-            checkWelcome()
-        }
-        .sheet(isPresented: $showWelcome) {
-            WelcomeView {
-                markWelcomeSeen()
-                showWelcome = false
-            }
-            .environmentObject(model)
         }
     }
 
@@ -133,16 +123,6 @@ struct MenuContentView: View {
         }
         .buttonStyle(.borderless)
         .font(.caption)
-    }
-
-    private func checkWelcome() {
-        if !UserDefaults.standard.bool(forKey: Self.welcomeKey) {
-            showWelcome = true
-        }
-    }
-
-    private func markWelcomeSeen() {
-        UserDefaults.standard.set(true, forKey: Self.welcomeKey)
     }
 
     private func disableWindowResizing() {
