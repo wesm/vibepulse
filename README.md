@@ -30,7 +30,6 @@ VibePulse is a macOS menu bar app that tracks Claude Code + Codex token spend us
 3. Launch it. If macOS blocks the app, open System Settings -> Privacy & Security and allow it.
 
 
-Note: Releases are currently unsigned. Signed and notarized builds are planned.
 
 ## First run
 
