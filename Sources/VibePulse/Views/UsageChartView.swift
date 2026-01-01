@@ -16,6 +16,8 @@ struct UsageChartView: View {
       todayChart
     case .thirtyDays:
       dailyChart
+    case .limits:
+      EmptyView()
     }
   }
 

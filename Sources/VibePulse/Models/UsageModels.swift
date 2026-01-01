@@ -3,6 +3,7 @@ import Foundation
 enum ChartMode: String, CaseIterable, Identifiable {
   case today
   case thirtyDays
+  case limits
 
   var id: String { rawValue }
 
@@ -12,6 +13,8 @@ enum ChartMode: String, CaseIterable, Identifiable {
       return "Today"
     case .thirtyDays:
       return "30 Days"
+    case .limits:
+      return "Limits"
     }
   }
 }
@@ -110,4 +113,15 @@ struct ToolTotal: Identifiable {
   let id = UUID()
   let tool: UsageTool
   let totalCost: Double
+}
+
+struct UsageLimit: Identifiable {
+  let id = UUID()
+  let tool: UsageTool
+  let title: String
+  let percentUsed: Double?
+  let resetAt: Date?
+  let resetText: String?
+  let isWeekly: Bool
+  let sortOrder: Int
 }

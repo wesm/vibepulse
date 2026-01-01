@@ -7,6 +7,8 @@ final class AppModel: ObservableObject {
   @Published var hourlySeries: [UsageSeriesPoint] = []
   @Published var cumulativeSeries: [UsageSeriesPoint] = []
   @Published var dailySeries: [UsageSeriesPoint] = []
+  @Published var limits: [UsageLimit] = []
+  @Published var limitErrors: [UsageTool: String] = [:]
   @Published var toolTotals: [ToolTotal] = []
   @Published var lastUpdated: Date?
   @Published var statusMessage: String?
@@ -127,6 +129,8 @@ final class AppModel: ObservableObject {
       }
 
       var errors: [String] = []
+      var limitSnapshots: [UsageLimit] = []
+      var limitErrors: [UsageTool: String] = [:]
 
       for tool in tools {
         do {
@@ -138,6 +142,14 @@ final class AppModel: ObservableObject {
         } catch {
           errors.append("\(tool.displayName): \(error.localizedDescription)")
         }
+
+        do {
+          let limits = try fetcher.fetchLimits(for: tool)
+          limitSnapshots.append(contentsOf: limits)
+        } catch {
+          limitErrors[tool] = "Unable to load usage limits."
+          errors.append("\(tool.displayName) limits unavailable.")
+        }
       }
 
       let refreshTime = Date()
@@ -148,6 +160,19 @@ final class AppModel: ObservableObject {
         } else {
           self.lastUpdated = refreshTime
         }
+        let sortedLimits = limitSnapshots.sorted {
+          if $0.tool != $1.tool {
+            let leftIndex = UsageTool.allCases.firstIndex(of: $0.tool) ?? 0
+            let rightIndex = UsageTool.allCases.firstIndex(of: $1.tool) ?? 0
+            return leftIndex < rightIndex
+          }
+          if $0.sortOrder != $1.sortOrder {
+            return $0.sortOrder < $1.sortOrder
+          }
+          return $0.title < $1.title
+        }
+        self.limits = sortedLimits
+        self.limitErrors = limitErrors
         self.reloadFromStore()
         self.isRefreshing = false
       }
@@ -199,8 +224,10 @@ final class AppModel: ObservableObject {
       let samples = store.fetchSamples(tool: tool, from: startOfDay, to: now).sorted {
         $0.recordedAt < $1.recordedAt
       }
+      let usageStartIndex = samples.firstIndex(where: { $0.totalCost > 0.0001 || $0.deltaCost > 0.0001 })
+      let filteredSamples = usageStartIndex.map { Array(samples[$0...]) } ?? []
       cumulativePoints.append(
-        contentsOf: samples.map {
+        contentsOf: filteredSamples.map {
           UsageSeriesPoint(tool: tool, date: $0.recordedAt, cost: $0.totalCost)
         })
     }

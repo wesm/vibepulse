@@ -10,7 +10,19 @@ enum Formatters {
     return formatter
   }()
 
+  static let percent: NumberFormatter = {
+    let formatter = NumberFormatter()
+    formatter.numberStyle = .percent
+    formatter.maximumFractionDigits = 1
+    formatter.minimumFractionDigits = 0
+    return formatter
+  }()
+
   static func currencyString(_ value: Double) -> String {
     currency.string(from: NSNumber(value: value)) ?? "$0.00"
+  }
+
+  static func percentString(_ value: Double) -> String {
+    percent.string(from: NSNumber(value: value)) ?? "0%"
   }
 }

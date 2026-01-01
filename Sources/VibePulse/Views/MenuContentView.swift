@@ -8,7 +8,9 @@ struct MenuContentView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
       header
-      totalSection
+      if chartMode != .limits {
+        totalSection
+      }
       Picker("View", selection: $chartMode) {
         ForEach(ChartMode.allCases) { mode in
           Text(mode.title).tag(mode)
@@ -16,14 +18,25 @@ struct MenuContentView: View {
       }
       .pickerStyle(.segmented)
 
-      Text(chartMode == .today ? "Cumulative" : "By Day")
-        .font(.caption)
-        .foregroundColor(.secondary)
+      if chartMode != .limits {
+        Text(chartMode == .today ? "Cumulative" : "By Day")
+          .font(.caption)
+          .foregroundColor(.secondary)
 
-      UsageChartView(
-        mode: chartMode, cumulativeSeries: model.cumulativeSeries, dailySeries: model.dailySeries)
+        UsageChartView(
+          mode: chartMode, cumulativeSeries: model.cumulativeSeries, dailySeries: model.dailySeries)
 
-      totalsBreakdown
+        totalsBreakdown
+      } else {
+        LimitsView(
+          claudeLimits: claudeLimits,
+          codexLimits: codexLimits,
+          claudeError: claudeLimitError,
+          codexError: codexLimitError,
+          showClaude: model.includeClaude,
+          showCodex: model.includeCodex
+        )
+      }
 
       if let status = model.statusMessage {
         Text(status)
@@ -139,6 +152,8 @@ struct MenuContentView: View {
     case .thirtyDays:
       let total = model.dailySeries.reduce(0) { $0 + $1.cost }
       return Formatters.currencyString(total)
+    case .limits:
+      return ""
     }
   }
 
@@ -148,6 +163,8 @@ struct MenuContentView: View {
       return "Combined today via ccusage"
     case .thirtyDays:
       return "Combined (last 30 days) via ccusage"
+    case .limits:
+      return ""
     }
   }
 
@@ -164,6 +181,24 @@ struct MenuContentView: View {
         guard let total = totalsByTool[tool], total > 0.0001 else { return nil }
         return ToolTotal(tool: tool, totalCost: total)
       }
+    case .limits:
+      return []
     }
+  }
+
+  private var claudeLimits: [UsageLimit] {
+    model.limits.filter { $0.tool == .claude }
+  }
+
+  private var codexLimits: [UsageLimit] {
+    model.limits.filter { $0.tool == .codex }
+  }
+
+  private var claudeLimitError: String? {
+    model.limitErrors[.claude]
+  }
+
+  private var codexLimitError: String? {
+    model.limitErrors[.codex]
   }
 }

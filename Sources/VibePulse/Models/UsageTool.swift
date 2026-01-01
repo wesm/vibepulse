@@ -41,4 +41,13 @@ enum UsageTool: String, CaseIterable, Identifiable {
       return ["npx", "--yes", "@ccusage/codex@latest", "daily", "--json", "--locale", "en-CA"]
     }
   }
+
+  var limitsCommand: [String] {
+    switch self {
+    case .claude:
+      return ["claude", "--print", "/usage", "--output-format", "text"]
+    case .codex:
+      return ["codex", "exec", "--skip-git-repo-check", "--color", "never", "/status"]
+    }
+  }
 }
