@@ -135,6 +135,52 @@ This becomes `APPLE_API_KEY_CONTENT`.
 | `APPLE_API_KEY`         | Key ID (10 chars, e.g. `ABC123DEF0`)   |
 | `APPLE_API_ISSUER`      | Issuer UUID from the API keys page     |
 
+## 3. Sparkle EdDSA Key (update signing)
+
+Sparkle uses an Ed25519 keypair to verify that downloaded updates were
+produced by the same developer. The private key signs each release's DMG
+via `sign_update`; the public key is embedded in the app's `Info.plist`.
+
+### One-time setup
+
+1. Build VibePulse so the Sparkle framework is available:
+   ```bash
+   swift build
+   ```
+
+2. Generate the keypair:
+   ```bash
+   $(find .build/artifacts -name generate_keys -type f | head -1)
+   ```
+   The tool stores the private key in the login Keychain and prints the
+   base64 public key to stdout.
+
+3. Extract the private key and upload to GitHub:
+   ```bash
+   security find-generic-password \
+     -s "https://sparkle-project.org" -w \
+     | gh secret set SPARKLE_ED_PRIVATE_KEY
+   ```
+
+4. Back up the private key alongside the Apple credentials:
+   ```bash
+   security find-generic-password \
+     -s "https://sparkle-project.org" -w \
+     > ~/code/agentsview-release-secrets/sparkle-ed-private.txt
+   ```
+
+### Secret
+
+| Secret                    | Value                              |
+| ------------------------- | ---------------------------------- |
+| `SPARKLE_ED_PRIVATE_KEY`  | Ed25519 private key (base64, ~90 chars) |
+
+### Key rotation
+
+See `docs/superpowers/specs/2026-04-13-sparkle-auto-updates-design.md`,
+section "Key rotation" for the planned-rotation and compromised-key
+recovery procedures.
+
 ## Setting the secrets
 
 Use `gh secret set` from the repo root. The command reads the value from stdin
@@ -150,6 +196,8 @@ echo -n 'Developer ID Application: Your Name (TEAMID)' | gh secret set APPLE_SIG
 gh secret set APPLE_API_KEY_CONTENT   # paste base64, Ctrl-D
 echo -n 'ABC123DEF0'                       | gh secret set APPLE_API_KEY
 echo -n 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' | gh secret set APPLE_API_ISSUER
+
+gh secret set SPARKLE_ED_PRIVATE_KEY   # paste base64, Ctrl-D
 ```
 
 Verify:
@@ -158,7 +206,7 @@ Verify:
 gh secret list
 ```
 
-Expected: six rows with the names above.
+Expected: seven rows with the names above.
 
 ## Triggering a release
 

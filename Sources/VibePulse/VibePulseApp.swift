@@ -4,6 +4,7 @@ import SwiftUI
 @main
 struct VibePulseApp: App {
   @StateObject private var model = AppModel()
+  @StateObject private var updaterController = UpdaterController()
 
   init() {
     NSApplication.shared.setActivationPolicy(.accessory)
@@ -13,6 +14,7 @@ struct VibePulseApp: App {
     MenuBarExtra {
       MenuContentView()
         .environmentObject(model)
+        .environmentObject(updaterController)
     } label: {
       MenuBarLabelView(totalText: model.menuTotalText)
     }

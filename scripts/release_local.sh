@@ -43,10 +43,20 @@ if ! command -v gh >/dev/null 2>&1; then
   exit 1
 fi
 
+# Phase 1: create or update draft release with DMG
 if gh release view "$VERSION_RAW" >/dev/null 2>&1; then
   gh release upload "$VERSION_RAW" "$DMG_PATH" --clobber
 else
-  gh release create "$VERSION_RAW" "$DMG_PATH" --generate-notes
+  gh release create "$VERSION_RAW" "$DMG_PATH" \
+    --generate-notes --draft
 fi
+
+# Phase 2: generate and attach appcast
+"$ROOT_DIR/scripts/generate_appcast.sh" "$VERSION_RAW"
+gh release upload "$VERSION_RAW" \
+  "$ROOT_DIR/dist/appcast.xml" --clobber
+
+# Phase 3: publish the draft
+gh release edit "$VERSION_RAW" --draft=false 2>/dev/null || true
 
 echo "Release published: $VERSION_RAW"
