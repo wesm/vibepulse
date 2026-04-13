@@ -100,12 +100,35 @@ jobs:
           shasum -a 256 *.dmg > SHA256SUMS
           cat SHA256SUMS
 
-      - name: Upload to GitHub Release
+      # Phase 1: Create draft release with DMG + checksums
+      - name: Upload to draft GitHub Release
         uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe  # v2.6.1
         with:
+          draft: true
+          generate_release_notes: true
           files: |
             dist/*.dmg
             dist/SHA256SUMS
+
+      # Phase 2: Generate and attach appcast
+      - name: Generate appcast
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: scripts/generate_appcast.sh "${{ github.ref_name }}"
+
+      - name: Upload appcast to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ github.ref_name }}" \
+            dist/appcast.xml --clobber
+
+      # Phase 3: Publish the draft
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit "${{ github.ref_name }}" --draft=false
 
       - name: Cleanup signing secrets
         if: always()
