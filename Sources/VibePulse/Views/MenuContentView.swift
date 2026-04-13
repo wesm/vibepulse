@@ -37,6 +37,7 @@ struct MenuContentView: View {
     }
     .padding(12)
     .frame(width: 360)
+    .background(Color(nsColor: .windowBackgroundColor))
     .onAppear {
       disableWindowResizing()
       model.refreshNow()
