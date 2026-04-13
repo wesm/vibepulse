@@ -27,12 +27,12 @@ PUB_DATE=$(date -u '+%a, %d %b %Y %H:%M:%S %z')
 DMG_URL="https://github.com/wesm/vibepulse/releases/download/v${VERSION}/${APP_NAME}-${VERSION}.dmg"
 
 # --- EdDSA signature ---
-SPARKLE_FW=$(find "$BUILD_DIR/artifacts" -type d \
-  -path '*macos-arm64_x86_64/Sparkle.framework' | head -1)
-SIGN_UPDATE="$SPARKLE_FW/Versions/B/Resources/sign_update"
+SIGN_UPDATE=$(find "$BUILD_DIR/artifacts" -name sign_update \
+  -not -path '*/old_dsa_scripts/*' -type f | head -1)
 
-if [ ! -x "$SIGN_UPDATE" ]; then
-  echo "Error: sign_update not found at $SIGN_UPDATE"
+if [ -z "$SIGN_UPDATE" ] || [ ! -x "$SIGN_UPDATE" ]; then
+  echo "Error: sign_update not found in .build/artifacts."
+  echo "Run 'swift package resolve' first."
   exit 1
 fi
 
