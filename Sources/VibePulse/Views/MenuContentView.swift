@@ -3,6 +3,7 @@ import SwiftUI
 
 struct MenuContentView: View {
   @EnvironmentObject private var model: AppModel
+  @EnvironmentObject private var updaterController: UpdaterController
   @State private var chartMode: ChartMode = .today
 
   var body: some View {
@@ -115,6 +116,10 @@ struct MenuContentView: View {
 
       Button("Settings") {
         model.openSettings()
+      }
+
+      Button("Check for Updates\u{2026}") {
+        updaterController.checkForUpdates()
       }
 
       Spacer()
