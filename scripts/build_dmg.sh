@@ -123,9 +123,14 @@ if [ -n "$SIGN_IDENTITY" ]; then
     [ -d "$xpc" ] && codesign "${CODESIGN_ARGS[@]}" "$xpc"
   done
 
-  if [ -d "$SPARKLE_EMBEDDED/Versions/B/Autoupdate.app" ]; then
+  # Sparkle 2.9.1: Autoupdate is a bare Mach-O, Updater.app is a bundle
+  if [ -f "$SPARKLE_EMBEDDED/Versions/B/Autoupdate" ]; then
     codesign "${CODESIGN_ARGS[@]}" \
-      "$SPARKLE_EMBEDDED/Versions/B/Autoupdate.app"
+      "$SPARKLE_EMBEDDED/Versions/B/Autoupdate"
+  fi
+  if [ -d "$SPARKLE_EMBEDDED/Versions/B/Updater.app" ]; then
+    codesign "${CODESIGN_ARGS[@]}" \
+      "$SPARKLE_EMBEDDED/Versions/B/Updater.app"
   fi
 
   codesign "${CODESIGN_ARGS[@]}" "$SPARKLE_EMBEDDED"
