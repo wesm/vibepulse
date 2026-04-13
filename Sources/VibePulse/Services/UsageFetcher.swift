@@ -4,16 +4,17 @@ final class UsageFetcher: @unchecked Sendable {
   enum FetchError: Error {
     case commandFailed(String)
     case invalidOutput
-    case npxNotFound(String?)
+    case agentsviewNotFound(String?)
   }
 
   func fetchDailyTotals(for tool: UsageTool) throws -> [DailyTotal] {
     let data = try runCommand(tool.dailyCommand)
-    return try parseDailyTotals(for: tool, data: data)
+    return try parseDailyTotals(data: data)
   }
 
   private func runCommand(_ arguments: [String]) throws -> Data {
-    let (executableURL, resolvedArguments) = try resolveCommand(arguments: arguments)
+    let (executableURL, resolvedArguments) =
+      try resolveCommand(arguments: arguments)
     let process = Process()
     process.executableURL = executableURL
     process.arguments = resolvedArguments
@@ -32,41 +33,51 @@ final class UsageFetcher: @unchecked Sendable {
     guard process.terminationStatus == 0 else {
       let output = String(data: data, encoding: .utf8) ?? ""
       let errorOutput = String(data: errorData, encoding: .utf8) ?? ""
-      let combined = [output, errorOutput].filter { !$0.isEmpty }.joined(separator: "\n")
+      let combined =
+        [output, errorOutput].filter { !$0.isEmpty }
+        .joined(separator: "\n")
       throw FetchError.commandFailed(combined)
     }
 
     return data
   }
 
-  private func resolveCommand(arguments: [String]) throws -> (URL, [String]) {
-    guard let first = arguments.first else {
+  private func resolveCommand(
+    arguments: [String]
+  ) throws -> (URL, [String]) {
+    guard let first = arguments.first, first == "agentsview" else {
       return (URL(fileURLWithPath: "/usr/bin/env"), arguments)
     }
 
-    if first == "npx" {
-      if let override = UserDefaults.standard.string(forKey: "npxPath"), !override.isEmpty {
-        if FileManager.default.isExecutableFile(atPath: override) {
-          return (URL(fileURLWithPath: override), Array(arguments.dropFirst()))
-        }
-        throw FetchError.npxNotFound(override)
+    let override = UserDefaults.standard.string(
+      forKey: "agentsviewPath"
+    )
+    if let override, !override.isEmpty {
+      if FileManager.default.isExecutableFile(atPath: override) {
+        return (
+          URL(fileURLWithPath: override),
+          Array(arguments.dropFirst())
+        )
       }
-
-      if let npxPath = resolveNpxExecutable() {
-        return (URL(fileURLWithPath: npxPath), Array(arguments.dropFirst()))
-      }
-
-      throw FetchError.npxNotFound(nil)
+      throw FetchError.agentsviewNotFound(override)
     }
 
-    return (URL(fileURLWithPath: "/usr/bin/env"), arguments)
+    if let resolved = resolveAgentsviewExecutable() {
+      return (
+        URL(fileURLWithPath: resolved),
+        Array(arguments.dropFirst())
+      )
+    }
+
+    throw FetchError.agentsviewNotFound(nil)
   }
 
-  private func resolveNpxExecutable() -> String? {
+  private func resolveAgentsviewExecutable() -> String? {
+    let home = FileManager.default.homeDirectoryForCurrentUser.path
     let candidates = [
-      "/opt/homebrew/bin/npx",
-      "/usr/local/bin/npx",
-      "/usr/bin/npx",
+      "\(home)/.local/bin/agentsview",
+      "/usr/local/bin/agentsview",
+      "/opt/homebrew/bin/agentsview",
     ]
     for path in candidates {
       if FileManager.default.isExecutableFile(atPath: path) {
@@ -76,7 +87,8 @@ final class UsageFetcher: @unchecked Sendable {
 
     let paths = buildSearchPaths()
     for directory in paths {
-      let path = (directory as NSString).appendingPathComponent("npx")
+      let path =
+        (directory as NSString).appendingPathComponent("agentsview")
       if FileManager.default.isExecutableFile(atPath: path) {
         return path
       }
@@ -92,7 +104,9 @@ final class UsageFetcher: @unchecked Sendable {
   }
 
   private func buildSearchPaths() -> [String] {
+    let home = FileManager.default.homeDirectoryForCurrentUser.path
     let defaultPaths = [
+      "\(home)/.local/bin",
       "/opt/homebrew/bin",
       "/usr/local/bin",
       "/usr/bin",
@@ -101,7 +115,8 @@ final class UsageFetcher: @unchecked Sendable {
       "/sbin",
     ]
     let existing =
-      ProcessInfo.processInfo.environment["PATH"]?.split(separator: ":").map(String.init) ?? []
+      ProcessInfo.processInfo.environment["PATH"]?
+      .split(separator: ":").map(String.init) ?? []
     var combined: [String] = []
     for path in defaultPaths + existing {
       if !combined.contains(path) {
@@ -111,13 +126,15 @@ final class UsageFetcher: @unchecked Sendable {
     return combined
   }
 
-  private func parseDailyTotals(for tool: UsageTool, data: Data) throws -> [DailyTotal] {
+  private func parseDailyTotals(data: Data) throws -> [DailyTotal] {
     if let text = String(data: data, encoding: .utf8),
       text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     {
       return []
     }
-    let json = try JSONSerialization.jsonObject(with: data, options: [])
+    let json = try JSONSerialization.jsonObject(
+      with: data, options: []
+    )
     let dailyRows: [[String: Any]]
 
     if let dict = json as? [String: Any] {
@@ -128,15 +145,11 @@ final class UsageFetcher: @unchecked Sendable {
       throw FetchError.invalidOutput
     }
 
-    let costKey = tool == .claude ? "totalCost" : "costUSD"
-
     return dailyRows.compactMap { row in
-      guard let rawDate = row["date"] as? String else {
+      guard let dateKey = row["date"] as? String else {
         return nil
       }
-      let dateKey =
-        tool == .codex ? (DateHelper.normalizedDateKey(from: rawDate) ?? rawDate) : rawDate
-      guard let cost = parseNumber(row[costKey]) else {
+      guard let cost = parseNumber(row["totalCost"]) else {
         return nil
       }
       return DailyTotal(dateKey: dateKey, cost: cost)
@@ -164,11 +177,16 @@ extension UsageFetcher.FetchError: LocalizedError {
       return output.isEmpty ? "Usage command failed." : output
     case .invalidOutput:
       return "Usage command returned invalid JSON."
-    case .npxNotFound(let override):
+    case .agentsviewNotFound(let override):
       if let override {
-        return "npx not found at \(override). Update the path in Settings or install Node.js."
+        return
+          "agentsview not found at \(override). "
+          + "Update the path in Settings or install agentsview."
       }
-      return "npx not found. Install Node.js or set the npx path in Settings."
+      return
+        "agentsview not found. "
+        + "Install it (https://agentsview.io) "
+        + "or set the path in Settings."
     }
   }
 }

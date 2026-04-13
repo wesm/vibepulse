@@ -145,9 +145,9 @@ struct MenuContentView: View {
   private var combinedTotalSubtitle: String {
     switch chartMode {
     case .today:
-      return "Combined today via ccusage"
+      return "Combined today via agentsview"
     case .thirtyDays:
-      return "Combined (last 30 days) via ccusage"
+      return "Combined (last 30 days) via agentsview"
     }
   }
 

@@ -28,9 +28,11 @@ final class AppModel: ObservableObject {
     }
   }
   @Published var loginItemMessage: String?
-  @Published var npxPath: String {
+  @Published var agentsviewPath: String {
     didSet {
-      defaults.set(npxPath, forKey: DefaultsKey.npxPath)
+      defaults.set(
+        agentsviewPath, forKey: DefaultsKey.agentsviewPath
+      )
     }
   }
 
@@ -80,7 +82,8 @@ final class AppModel: ObservableObject {
       lastMaintenanceAt = Date(timeIntervalSince1970: storedMaintenance)
     }
 
-    npxPath = defaults.string(forKey: DefaultsKey.npxPath) ?? ""
+    agentsviewPath =
+      defaults.string(forKey: DefaultsKey.agentsviewPath) ?? ""
     startAtLogin = Self.currentLoginItemEnabled()
 
     if SMAppService.mainApp.status == .requiresApproval {
@@ -118,14 +121,6 @@ final class AppModel: ObservableObject {
     let todayKey = DateHelper.dateKey(for: Date())
 
     DispatchQueue.global(qos: .background).async { [fetcher, store] in
-      guard NetworkMonitor.isOnline() else {
-        DispatchQueue.main.async {
-          self.statusMessage = "No internet connection."
-          self.isRefreshing = false
-        }
-        return
-      }
-
       var errors: [String] = []
 
       for tool in tools {
@@ -333,7 +328,7 @@ final class AppModel: ObservableObject {
     static let includeCodex = "includeCodex"
     static let refreshMinutes = "refreshMinutes"
     static let refreshInterval = "refreshInterval"
-    static let npxPath = "npxPath"
+    static let agentsviewPath = "agentsviewPath"
     static let maintenanceMode = "maintenanceMode"
     static let lastMaintenanceAt = "lastMaintenanceAt"
   }

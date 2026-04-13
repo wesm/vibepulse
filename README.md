@@ -1,6 +1,6 @@
 # VibePulse
 
-VibePulse is a macOS menu bar app that tracks Claude Code + Codex token spend using the [`ccusage`](https://github.com/ryoppippi/ccusage) tools.
+VibePulse is a macOS menu bar app that tracks Claude Code + Codex token spend using [agentsview](https://github.com/wesm/agentsview).
 
 ## Highlights
 
@@ -20,7 +20,7 @@ VibePulse is a macOS menu bar app that tracks Claude Code + Codex token spend us
 ## Requirements
 
 - macOS 13+ (Ventura)
-- Node.js (VibePulse runs `npx ccusage@latest` and `npx @ccusage/codex@latest`)
+- [agentsview](https://github.com/wesm/agentsview) installed (`agentsview` on PATH or path set in Settings)
 - Claude Code and/or Codex usage logs on disk
 
 ## Install
@@ -29,40 +29,26 @@ VibePulse is a macOS menu bar app that tracks Claude Code + Codex token spend us
 2. Drag `VibePulse.app` to your Applications folder.
 3. Launch it. If macOS blocks the app, open System Settings -> Privacy & Security and allow it.
 
-
-
 ## First run
 
 <p align="center">
   <img src="docs/screenshots/vibepulse_welcome.png" alt="Welcome" width="50%" />
 </p>
 
-- A welcome window explains the Node.js requirement, notes the default 15-minute refresh cadence, and lets you toggle start at login.
+- A welcome window explains the agentsview requirement, notes the default 15-minute refresh cadence, and lets you toggle start at login.
 - You can revisit Settings from the menu bar at any time.
 
-## Node.js / npx setup
+## agentsview setup
 
-VibePulse runs outside your shell, so it will not see `nvm`'s PATH unless you set an explicit `npx` path.
-
-Recommended (least friction for menu bar apps):
+Install agentsview:
 
 ```bash
-brew install node
+curl -fsSL https://agentsview.io/install.sh | bash
 ```
 
-This installs `npx` in `/opt/homebrew/bin/npx` (Apple Silicon) or `/usr/local/bin/npx` (Intel), which VibePulse can auto-detect.
+This installs `agentsview` to `~/.local/bin/agentsview` or `/usr/local/bin/agentsview`.
 
-If you use `nvm`:
-
-1. Find your `npx` path:
-
-```bash
-command -v npx
-```
-
-2. In VibePulse, open **Settings -> Dependencies** and paste that path into **npx path**.
-
-If you change your active Node version in `nvm`, update the path in Settings.
+VibePulse runs outside your shell, so if `agentsview` is installed to a non-standard location, set the path in **Settings -> Dependencies**.
 
 ## Settings
 
@@ -72,7 +58,7 @@ If you change your active Node version in `nvm`, update the path in Settings.
 
 - **Data Sources**: Enable Claude Code and/or Codex.
 - **Startup**: Start VibePulse at login (macOS may require approval).
-- **Dependencies**: Set a custom `npx` path if needed.
+- **Dependencies**: Set a custom `agentsview` path if needed.
 - **Refresh**: Choose how often the app refreshes (5m, 15m, 1h, 4h, 1d).
 - **Data Maintenance**: Normalize historical data and rerun import fixes.
 
@@ -81,12 +67,12 @@ If you change your active Node version in `nvm`, update the path in Settings.
 - All usage data stays local on your machine.
 - The database lives at `~/Library/Application Support/VibePulse/vibepulse.sqlite`.
 - VibePulse has no analytics or telemetry.
-- It runs the local `ccusage` tools via `npx` to read your logs.
+- It runs `agentsview usage daily --json` to read your local usage data.
 
 ## Troubleshooting
 
-- **No data**: Run `npx ccusage@latest` or `npx @ccusage/codex@latest` in Terminal to verify logs exist.
-- **npx not found**: Install Node via Homebrew or set the `npx` path in Settings -> Dependencies.
+- **No data**: Run `agentsview usage daily` in Terminal to verify usage data exists.
+- **agentsview not found**: Install agentsview or set the path in Settings -> Dependencies.
 - **Start at login**: macOS may require approval in System Settings -> Login Items.
 
 ## Local development

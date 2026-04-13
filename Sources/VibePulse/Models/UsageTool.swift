@@ -36,9 +36,9 @@ enum UsageTool: String, CaseIterable, Identifiable {
   var dailyCommand: [String] {
     switch self {
     case .claude:
-      return ["npx", "--yes", "ccusage@latest", "daily", "--json"]
+      return ["agentsview", "usage", "daily", "--json", "--agent", "claude"]
     case .codex:
-      return ["npx", "--yes", "@ccusage/codex@latest", "daily", "--json", "--locale", "en-CA"]
+      return ["agentsview", "usage", "daily", "--json", "--agent", "codex"]
     }
   }
 }

@@ -20,10 +20,16 @@ struct SettingsView: View {
       }
 
       Section("Dependencies") {
-        TextField("npx path (optional)", text: $model.npxPath)
-        Text("Leave blank to auto-detect. Example: /opt/homebrew/bin/npx")
-          .font(.caption)
-          .foregroundColor(.secondary)
+        TextField(
+          "agentsview path (optional)",
+          text: $model.agentsviewPath
+        )
+        Text(
+          "Leave blank to auto-detect."
+            + " Example: ~/.local/bin/agentsview"
+        )
+        .font(.caption)
+        .foregroundColor(.secondary)
       }
 
       Section {
@@ -90,6 +96,6 @@ struct SettingsView: View {
       }
     }
     .padding(20)
-    .frame(width: 480)
+    .frame(width: 520, height: 640)
   }
 }
