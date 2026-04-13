@@ -6,6 +6,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION_RAW="${1:-dev}"
 VERSION="${VERSION_RAW#v}"
 GIT_HASH="$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+BUILD_DATE="$(date -u '+%Y-%m-%d %H:%M UTC')"
 
 BUILD_DIR="$ROOT_DIR/.build"
 DIST_DIR="$ROOT_DIR/dist"
@@ -96,6 +97,8 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
   <string>${VERSION}</string>
   <key>VPGitHash</key>
   <string>${GIT_HASH}</string>
+  <key>VPBuildDate</key>
+  <string>${BUILD_DATE}</string>
   <key>LSMinimumSystemVersion</key>
   <string>13.0</string>
   <key>LSUIElement</key>

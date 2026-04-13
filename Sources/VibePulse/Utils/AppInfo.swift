@@ -15,6 +15,10 @@ enum AppInfo {
     Bundle.main.object(forInfoDictionaryKey: "VPGitHash") as? String ?? "unknown"
   }
 
+  static var buildDate: String {
+    Bundle.main.object(forInfoDictionaryKey: "VPBuildDate") as? String ?? "unknown"
+  }
+
   static var currentYear: String {
     let year = Calendar.current.component(.year, from: Date())
     return String(year)
