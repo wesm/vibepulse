@@ -8,8 +8,29 @@ final class UsageFetcher: @unchecked Sendable {
   }
 
   func fetchDailyTotals(for tool: UsageTool) throws -> [DailyTotal] {
-    let data = try runCommand(tool.dailyCommand)
-    return try parseDailyTotals(data: data)
+    // Retry transient failures so a refresh that lands while
+    // agentsview is mid-replace (self-update or reinstall) doesn't
+    // surface an error that sticks until the next scheduled refresh.
+    let maxAttempts = 3
+    let retryDelay: TimeInterval = 0.3
+
+    for attempt in 1...maxAttempts {
+      do {
+        let data = try runCommand(tool.dailyCommand)
+        return try parseDailyTotals(data: data)
+      } catch FetchError.agentsviewNotFound(let path) {
+        throw FetchError.agentsviewNotFound(path)
+      } catch {
+        if attempt == maxAttempts {
+          throw error
+        }
+        Thread.sleep(forTimeInterval: retryDelay)
+      }
+    }
+
+    // Unreachable: the loop returns on success or throws on the
+    // final attempt, but the compiler can't prove it.
+    throw FetchError.commandFailed("retry loop exhausted")
   }
 
   private func runCommand(_ arguments: [String]) throws -> Data {
