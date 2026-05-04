@@ -14,6 +14,8 @@ struct UsageChartView: View {
     switch mode {
     case .today:
       todayChart
+    case .sevenDays:
+      dailyChart
     case .thirtyDays:
       dailyChart
     }
@@ -73,12 +75,20 @@ struct UsageChartView: View {
       } else {
         Chart {
           ForEach(dailySeries) { point in
-            BarMark(
-              x: .value("Date", point.date, unit: .day),
-              y: .value("Cost", point.cost)
-            )
-            .foregroundStyle(by: .value("Tool", point.tool.displayName))
-            .position(by: .value("Tool", point.tool.displayName))
+            if mode.usesGroupedDailyBars {
+              BarMark(
+                x: .value("Date", point.date, unit: .day),
+                y: .value("Cost", point.cost)
+              )
+              .foregroundStyle(by: .value("Tool", point.tool.displayName))
+              .position(by: .value("Tool", point.tool.displayName))
+            } else {
+              BarMark(
+                x: .value("Date", point.date, unit: .day),
+                y: .value("Cost", point.cost)
+              )
+              .foregroundStyle(by: .value("Tool", point.tool.displayName))
+            }
           }
 
           if let dailyHoverDate, !dailyHoverPoints.isEmpty {
@@ -175,6 +185,8 @@ struct UsageChartView: View {
     [
       UsageTool.claude.displayName: UsageTool.claude.color,
       UsageTool.codex.displayName: UsageTool.codex.color,
+      UsageTool.pi.displayName: UsageTool.pi.color,
+      UsageTool.openCode.displayName: UsageTool.openCode.color,
     ]
   }
 }

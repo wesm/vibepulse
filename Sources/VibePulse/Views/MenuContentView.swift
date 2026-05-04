@@ -22,7 +22,7 @@ struct MenuContentView: View {
         .foregroundColor(.secondary)
 
       UsageChartView(
-        mode: chartMode, cumulativeSeries: model.cumulativeSeries, dailySeries: model.dailySeries)
+        mode: chartMode, cumulativeSeries: model.cumulativeSeries, dailySeries: visibleDailySeries)
 
       totalsBreakdown
 
@@ -93,18 +93,18 @@ struct MenuContentView: View {
   }
 
   private var totalsBreakdown: some View {
-    HStack(spacing: 12) {
+    LazyVGrid(columns: legendColumns, alignment: .leading, spacing: 8) {
       ForEach(toolBreakdown) { total in
-        HStack(spacing: 6) {
-          Circle()
-            .fill(total.tool.color)
-            .frame(width: 8, height: 8)
-          Text("\(total.tool.displayName) \(Formatters.currencyString(total.totalCost))")
-            .font(.caption)
-            .foregroundColor(.secondary)
-        }
+        ToolTotalLegendItem(total: total)
       }
     }
+  }
+
+  private var legendColumns: [GridItem] {
+    [
+      GridItem(.flexible(minimum: 120), alignment: .leading),
+      GridItem(.flexible(minimum: 120), alignment: .leading),
+    ]
   }
 
   private var controls: some View {
@@ -142,8 +142,8 @@ struct MenuContentView: View {
     switch chartMode {
     case .today:
       return model.menuTotalText
-    case .thirtyDays:
-      let total = model.dailySeries.reduce(0) { $0 + $1.cost }
+    case .sevenDays, .thirtyDays:
+      let total = visibleDailySeries.reduce(0) { $0 + $1.cost }
       return Formatters.currencyString(total)
     }
   }
@@ -152,6 +152,8 @@ struct MenuContentView: View {
     switch chartMode {
     case .today:
       return "Combined today via agentsview"
+    case .sevenDays:
+      return "Combined (last 7 days) via agentsview"
     case .thirtyDays:
       return "Combined (last 30 days) via agentsview"
     }
@@ -161,15 +163,42 @@ struct MenuContentView: View {
     switch chartMode {
     case .today:
       return model.toolTotals.filter { $0.totalCost > 0.0001 }
-    case .thirtyDays:
+    case .sevenDays, .thirtyDays:
       var totalsByTool: [UsageTool: Double] = [:]
-      for point in model.dailySeries {
+      for point in visibleDailySeries {
         totalsByTool[point.tool, default: 0] += point.cost
       }
       return UsageTool.allCases.compactMap { tool in
         guard let total = totalsByTool[tool], total > 0.0001 else { return nil }
         return ToolTotal(tool: tool, totalCost: total)
       }
+    }
+  }
+
+  private var visibleDailySeries: [UsageSeriesPoint] {
+    UsageSeriesFilters.visibleDailySeries(model.dailySeries, mode: chartMode)
+  }
+}
+
+private struct ToolTotalLegendItem: View {
+  let total: ToolTotal
+
+  var body: some View {
+    HStack(alignment: .top, spacing: 6) {
+      Circle()
+        .fill(total.tool.color)
+        .frame(width: 8, height: 8)
+        .padding(.top, 4)
+
+      VStack(alignment: .leading, spacing: 1) {
+        Text(total.tool.displayName)
+          .lineLimit(1)
+          .minimumScaleFactor(0.85)
+        Text(Formatters.currencyString(total.totalCost))
+          .monospacedDigit()
+      }
+      .font(.caption)
+      .foregroundColor(.secondary)
     }
   }
 }

@@ -50,6 +50,20 @@ final class AppModel: ObservableObject {
     }
   }
 
+  @Published var includePi: Bool {
+    didSet {
+      defaults.set(includePi, forKey: DefaultsKey.includePi)
+      reloadFromStore()
+    }
+  }
+
+  @Published var includeOpenCode: Bool {
+    didSet {
+      defaults.set(includeOpenCode, forKey: DefaultsKey.includeOpenCode)
+      reloadFromStore()
+    }
+  }
+
   @Published var refreshInterval: RefreshInterval {
     didSet {
       defaults.set(refreshInterval.rawValue, forKey: DefaultsKey.refreshInterval)
@@ -68,6 +82,8 @@ final class AppModel: ObservableObject {
   init() {
     includeClaude = defaults.object(forKey: DefaultsKey.includeClaude) as? Bool ?? true
     includeCodex = defaults.object(forKey: DefaultsKey.includeCodex) as? Bool ?? true
+    includePi = defaults.object(forKey: DefaultsKey.includePi) as? Bool ?? true
+    includeOpenCode = defaults.object(forKey: DefaultsKey.includeOpenCode) as? Bool ?? true
     let storedInterval = defaults.string(forKey: DefaultsKey.refreshInterval)
     if let storedInterval, let interval = RefreshInterval(rawValue: storedInterval) {
       refreshInterval = interval
@@ -111,7 +127,7 @@ final class AppModel: ObservableObject {
 
     let tools = activeTools
     guard !tools.isEmpty else {
-      statusMessage = "Enable Claude Code or Codex in Settings."
+      statusMessage = "Enable at least one data source in Settings."
       return
     }
 
@@ -168,6 +184,10 @@ final class AppModel: ObservableObject {
         return includeClaude
       case .codex:
         return includeCodex
+      case .pi:
+        return includePi
+      case .openCode:
+        return includeOpenCode
       }
     }
   }
@@ -238,7 +258,9 @@ final class AppModel: ObservableObject {
     DispatchQueue.global(qos: .background).async { [store] in
       do {
         let deltaUpdated = try store.backfillSampleDeltas()
-        let dateUpdated = try store.normalizeDailyRollupDates(for: .codex)
+        let dateUpdated = try UsageTool.allCases.reduce(0) { count, tool in
+          count + (try store.normalizeDailyRollupDates(for: tool))
+        }
         let message =
           "Maintenance complete. Updated \(deltaUpdated) snapshots, normalized \(dateUpdated) daily totals."
         let now = Date()
@@ -326,6 +348,8 @@ final class AppModel: ObservableObject {
     static let welcomeKey = "hasSeenWelcome"
     static let includeClaude = "includeClaude"
     static let includeCodex = "includeCodex"
+    static let includePi = "includePi"
+    static let includeOpenCode = "includeOpenCode"
     static let refreshMinutes = "refreshMinutes"
     static let refreshInterval = "refreshInterval"
     static let agentsviewPath = "agentsviewPath"

@@ -8,6 +8,8 @@ struct SettingsView: View {
       Section("Data Sources") {
         Toggle("Claude Code", isOn: $model.includeClaude)
         Toggle("Codex", isOn: $model.includeCodex)
+        Toggle("Pi", isOn: $model.includePi)
+        Toggle("OpenCode", isOn: $model.includeOpenCode)
       }
 
       Section("Startup") {

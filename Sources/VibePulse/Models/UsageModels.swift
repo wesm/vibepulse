@@ -2,6 +2,7 @@ import Foundation
 
 enum ChartMode: String, CaseIterable, Identifiable {
   case today
+  case sevenDays
   case thirtyDays
 
   var id: String { rawValue }
@@ -10,8 +11,30 @@ enum ChartMode: String, CaseIterable, Identifiable {
     switch self {
     case .today:
       return "Today"
+    case .sevenDays:
+      return "7 Days"
     case .thirtyDays:
       return "30 Days"
+    }
+  }
+
+  var dailyWindowDays: Int? {
+    switch self {
+    case .today:
+      return nil
+    case .sevenDays:
+      return 7
+    case .thirtyDays:
+      return 30
+    }
+  }
+
+  var usesGroupedDailyBars: Bool {
+    switch self {
+    case .today, .thirtyDays:
+      return false
+    case .sevenDays:
+      return true
     }
   }
 }

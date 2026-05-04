@@ -1,6 +1,6 @@
 # VibePulse
 
-VibePulse is a macOS menu bar app that tracks Claude Code + Codex token spend using [agentsview](https://github.com/wesm/agentsview).
+VibePulse is a macOS menu bar app that tracks Claude Code, Codex, Pi, and OpenCode token spend using [agentsview](https://github.com/wesm/agentsview).
 
 ## Highlights
 
@@ -21,7 +21,7 @@ VibePulse is a macOS menu bar app that tracks Claude Code + Codex token spend us
 
 - macOS 13+ (Ventura)
 - [agentsview](https://github.com/wesm/agentsview) installed (`agentsview` on PATH or path set in Settings)
-- Claude Code and/or Codex usage logs on disk
+- Claude Code, Codex, Pi, and/or OpenCode usage logs on disk
 
 ## Install
 
@@ -56,7 +56,7 @@ VibePulse runs outside your shell, so if `agentsview` is installed to a non-stan
   <img src="docs/screenshots/vibepulse_settings.png" alt="Settings" width="50%" />
 </p>
 
-- **Data Sources**: Enable Claude Code and/or Codex.
+- **Data Sources**: Enable Claude Code, Codex, Pi, and/or OpenCode.
 - **Startup**: Start VibePulse at login (macOS may require approval).
 - **Dependencies**: Set a custom `agentsview` path if needed.
 - **Refresh**: Choose how often the app refreshes (5m, 15m, 1h, 4h, 1d).
