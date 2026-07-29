@@ -267,6 +267,11 @@ final class UsageFetcher: @unchecked Sendable {
   }
 
   private static func parseNumber(_ value: Any?) -> Double? {
+    if let money = value as? [String: Any],
+      let microdollars = parseNumber(money["microdollars"])
+    {
+      return microdollars / 1_000_000
+    }
     if let doubleValue = value as? Double {
       return doubleValue
     }

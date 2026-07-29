@@ -65,6 +65,47 @@ final class UsageFetcherTests: XCTestCase {
     XCTAssertEqual(modelBreakdowns.map(\.cost), [10.25, 2.25])
   }
 
+  func testParseDailyTotalsConvertsSchemaThreeMicrodollarCostsToDollars() throws {
+    let json = """
+      {
+        "schema_version": 3,
+        "daily": [
+          {
+            "date": "2026-07-29",
+            "totalCost": { "microdollars": 20061684 },
+            "modelBreakdowns": [
+              {
+                "modelName": "claude-fable-5",
+                "cost": { "microdollars": 18209461 }
+              }
+            ],
+            "machineBreakdowns": [
+              {
+                "machineName": "host-a",
+                "cost": { "microdollars": 20061684 }
+              }
+            ]
+          }
+        ]
+      }
+      """
+    let data = try XCTUnwrap(json.data(using: .utf8))
+
+    let totals = try UsageFetcher.parseDailyTotals(data: data)
+
+    XCTAssertEqual(totals.count, 1)
+    let total = try XCTUnwrap(totals.first)
+    XCTAssertEqual(total.cost, 20.061684, accuracy: 0.000_001)
+    XCTAssertEqual(
+      try XCTUnwrap(total.modelBreakdowns?.first).cost,
+      18.209461,
+      accuracy: 0.000_001)
+    XCTAssertEqual(
+      try XCTUnwrap(total.machineBreakdowns?.first).cost,
+      20.061684,
+      accuracy: 0.000_001)
+  }
+
   func testParseDailyTotalsDistinguishesUnavailableModelBreakdownsFromExplicitEmpty() throws {
     let json = """
       {
