@@ -10,7 +10,7 @@ final class UsageAgentTests: XCTestCase {
     XCTAssertEqual(
       agent.dailyCommand,
       [
-        "agentsview", "usage", "daily", "--json", "--breakdown", "--agent",
+        "agentsview", "usage", "daily", "--format", "json", "--breakdown", "--agent",
         "future-agent_v2", "--since", "30d", "--no-sync",
       ])
   }
@@ -18,7 +18,10 @@ final class UsageAgentTests: XCTestCase {
   func testDiscoveryCommandRequestsAgentBreakdownsForThirtyDays() {
     XCTAssertEqual(
       UsageAgent.discoveryCommand,
-      ["agentsview", "usage", "daily", "--json", "--breakdown", "--since", "30d"])
+      [
+        "agentsview", "usage", "daily", "--format", "json", "--breakdown", "--since",
+        "30d",
+      ])
   }
 
   func testKnownAndGeneratedDisplayNamesArePresentationOnly() {

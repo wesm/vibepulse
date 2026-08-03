@@ -20,13 +20,13 @@ struct UsageAgent: Hashable, Identifiable, Comparable, Sendable {
 
   var dailyCommand: [String] {
     [
-      "agentsview", "usage", "daily", "--json", "--breakdown", "--agent", rawValue,
-      "--since", "30d", "--no-sync",
+      "agentsview", "usage", "daily", "--format", "json", "--breakdown", "--agent",
+      rawValue, "--since", "30d", "--no-sync",
     ]
   }
 
   static let discoveryCommand = [
-    "agentsview", "usage", "daily", "--json", "--breakdown", "--since", "30d",
+    "agentsview", "usage", "daily", "--format", "json", "--breakdown", "--since", "30d",
   ]
 
   static let claude = UsageAgent("claude")

@@ -21,7 +21,7 @@ VibePulse is a macOS menu bar app that tracks token spend for locally used AI co
 ## Requirements
 
 - macOS 13+ (Ventura)
-- [agentsview](https://github.com/kenn-io/agentsview) installed (`agentsview` on PATH or path set in Settings)
+- [agentsview](https://github.com/kenn-io/agentsview) v0.40.0 or newer installed (`agentsview` on PATH or path set in Settings)
 - Local usage from at least one agentsview-parsed agent with priced activity in the past 30 days
 
 ## Install
@@ -72,7 +72,7 @@ VibePulse runs outside your shell, so if `agentsview` is installed to a non-stan
 
 ## Troubleshooting
 
-- **Agent not shown**: Run `agentsview usage daily --json --breakdown --since 30d` in Terminal. The agent must appear in `agentBreakdowns` with positive total cost during that window.
+- **Agent not shown**: Run `agentsview usage daily --format json --breakdown --since 30d` in Terminal. The agent must appear in `agentBreakdowns` with positive total cost during that window.
 - **No data**: Run `agentsview usage daily` in Terminal to verify usage data exists.
 - **agentsview not found**: Install agentsview or set the path in Settings -> Dependencies.
 - **Start at login**: macOS may require approval in System Settings -> Login Items.

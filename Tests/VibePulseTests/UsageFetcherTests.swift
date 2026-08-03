@@ -33,8 +33,8 @@ final class UsageFetcherTests: XCTestCase {
     XCTAssertEqual(
       commands[1],
       [
-        "agentsview", "usage", "daily", "--json", "--agent", "claude",
-        "--since", "30d", "--no-sync",
+        "agentsview", "usage", "daily", "--format", "json", "--agent", "claude", "--since",
+        "30d", "--no-sync",
       ])
   }
 
@@ -70,10 +70,10 @@ final class UsageFetcherTests: XCTestCase {
     XCTAssertEqual(modelBreakdowns.map(\.cost), [10.25, 2.25])
   }
 
-  func testParseDailyTotalsConvertsSchemaThreeMicrodollarCostsToDollars() throws {
+  func testParseDailyTotalsConvertsMicrodollarCostsToDollars() throws {
     let json = """
       {
-        "schema_version": 3,
+        "schema_version": 4,
         "daily": [
           {
             "date": "2026-07-29",
@@ -239,19 +239,20 @@ final class UsageFetcherTests: XCTestCase {
   func testParseDiscoveredAgentsSumsThirtyDayBreakdownsAndDropsZeroCostAgents() throws {
     let json = """
       {
+        "schema_version": 4,
         "daily": [
           {
             "date": "2026-07-01",
             "agentBreakdowns": [
-              { "agent": "claude", "cost": 2.5 },
-              { "agent": "zero-agent", "cost": 0 }
+              { "agent": "claude", "cost": { "microdollars": 2500000 } },
+              { "agent": "zero-agent", "cost": { "microdollars": 0 } }
             ]
           },
           {
             "date": "2026-07-02",
             "agentBreakdowns": [
-              { "agent": "claude", "cost": 1.5 },
-              { "agent": "future-agent", "cost": 3 }
+              { "agent": "claude", "cost": { "microdollars": 1500000 } },
+              { "agent": "future-agent", "cost": { "microdollars": 3000000 } }
             ]
           }
         ]
