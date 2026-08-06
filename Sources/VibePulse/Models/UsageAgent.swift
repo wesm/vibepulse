@@ -35,6 +35,7 @@ struct UsageAgent: Hashable, Identifiable, Comparable, Sendable {
   static let omp = UsageAgent("omp")
   static let gemini = UsageAgent("gemini")
   static let openCode = UsageAgent("opencode")
+  static let copilot = UsageAgent("copilot")
 
   static func < (lhs: UsageAgent, rhs: UsageAgent) -> Bool {
     let lhsName = lhs.displayName.lowercased()
@@ -52,6 +53,7 @@ struct UsageAgent: Hashable, Identifiable, Comparable, Sendable {
     "omp": "OhMyPi",
     "gemini": "Gemini",
     "opencode": "OpenCode",
+    "copilot": "GitHub Copilot",
   ]
 
   private static func generatedDisplayName(from rawValue: String) -> String {
