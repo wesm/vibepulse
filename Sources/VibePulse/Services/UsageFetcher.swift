@@ -1,8 +1,11 @@
 import Foundation
 
 protocol UsageFetching: Sendable {
-  func discoverAgents() throws -> [UsageAgent]
-  func fetchDailyTotals(for tool: UsageAgent) throws -> [DailyTotal]
+  func discoverAgents(using context: UsageDateContext) throws -> [UsageAgent]
+  func fetchDailyTotals(
+    for tool: UsageAgent,
+    using context: UsageDateContext
+  ) throws -> [DailyTotal]
 }
 
 final class UsageFetcher: UsageFetching, @unchecked Sendable {
@@ -11,6 +14,7 @@ final class UsageFetcher: UsageFetching, @unchecked Sendable {
     case invalidOutput
     case agentsviewNotFound(String?)
     case invalidServerURL(String)
+    case unsupportedTimezone
   }
 
   private let commandRunner: (([String]) throws -> Data)?
@@ -19,44 +23,62 @@ final class UsageFetcher: UsageFetching, @unchecked Sendable {
     self.commandRunner = commandRunner
   }
 
-  func discoverAgents() throws -> [UsageAgent] {
+  func discoverAgents(using context: UsageDateContext) throws -> [UsageAgent] {
     try withRetry {
       let data = try fetchUsageData(
-        command: UsageAgent.discoveryCommand,
-        agent: nil)
+        command: UsageAgent.discoveryCommand(in: context.timeZone),
+        agent: nil,
+        context: context)
       return try Self.parseDiscoveredAgents(data: data)
     }
   }
 
-  func fetchDailyTotals(for tool: UsageAgent) throws -> [DailyTotal] {
+  func fetchDailyTotals(
+    for tool: UsageAgent,
+    using context: UsageDateContext
+  ) throws -> [DailyTotal] {
     try withRetry {
       let data: Data
       do {
         data = try fetchUsageData(
-          command: tool.dailyCommand,
-          agent: tool.rawValue)
+          command: tool.dailyCommand(in: context.timeZone),
+          agent: tool.rawValue,
+          context: context)
       } catch FetchError.commandFailed(let output)
         where Self.isUnsupportedBreakdownError(output)
       {
-        data = try executeCommand(tool.dailyCommand.filter { $0 != "--breakdown" })
+        data = try executeAgentsviewCommand(
+          tool.dailyCommand(in: context.timeZone).filter { $0 != "--breakdown" })
       }
-      return try Self.parseDailyTotals(data: data)
+      let totals = try Self.parseDailyTotals(data: data)
+      guard
+        totals.allSatisfy({
+          DateHelper.normalizedDateKey(from: $0.dateKey, in: context.timeZone) != nil
+        })
+      else {
+        throw FetchError.invalidOutput
+      }
+      return totals
     }
   }
 
-  private func fetchUsageData(command: [String], agent: String?) throws -> Data {
+  private func fetchUsageData(
+    command: [String],
+    agent: String?,
+    context: UsageDateContext
+  ) throws -> Data {
     let configuredURL =
       UserDefaults.standard.string(forKey: "agentsviewServerURL")?
       .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     guard !configuredURL.isEmpty else {
-      return try executeCommand(command)
+      return try executeAgentsviewCommand(command)
     }
 
     let url = try Self.makeServerURL(
       configuredURL: configuredURL,
       agent: agent,
-      now: Date(),
-      timeZone: TimeZone.current)
+      now: context.now,
+      timeZone: context.timeZone)
     return try Data(contentsOf: url)
   }
 
@@ -106,6 +128,8 @@ final class UsageFetcher: UsageFetching, @unchecked Sendable {
         return try operation()
       } catch FetchError.agentsviewNotFound(let path) {
         throw FetchError.agentsviewNotFound(path)
+      } catch FetchError.unsupportedTimezone {
+        throw FetchError.unsupportedTimezone
       } catch {
         if attempt == maxAttempts {
           throw error
@@ -124,6 +148,16 @@ final class UsageFetcher: UsageFetching, @unchecked Sendable {
     return try runCommand(arguments)
   }
 
+  private func executeAgentsviewCommand(_ arguments: [String]) throws -> Data {
+    do {
+      return try executeCommand(arguments)
+    } catch FetchError.commandFailed(let output)
+      where Self.isUnsupportedTimezoneError(output)
+    {
+      throw FetchError.unsupportedTimezone
+    }
+  }
+
   private static func isUnsupportedBreakdownError(_ output: String) -> Bool {
     let message = output.lowercased()
     guard message.contains("--breakdown") else { return false }
@@ -135,6 +169,23 @@ final class UsageFetcher: UsageFetching, @unchecked Sendable {
       "unexpected argument",
       "flag provided but not defined",
     ].contains { message.contains($0) }
+  }
+
+  private static func isUnsupportedTimezoneError(_ output: String) -> Bool {
+    let message = output.lowercased()
+    let rejectionMarkers = [
+      "unknown flag",
+      "unknown option",
+      "unrecognized argument",
+      "unrecognized option",
+      "unexpected argument",
+      "flag provided but not defined",
+    ]
+    return message.split(whereSeparator: { $0.isNewline }).contains { line in
+      let line = String(line)
+      return line.contains("--timezone")
+        && rejectionMarkers.contains { line.contains($0) }
+    }
   }
 
   private func runCommand(_ arguments: [String]) throws -> Data {
@@ -312,64 +363,76 @@ final class UsageFetcher: UsageFetching, @unchecked Sendable {
     if let text = String(data: data, encoding: .utf8),
       text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     {
-      return []
+      throw FetchError.invalidOutput
     }
     let json = try JSONSerialization.jsonObject(
       with: data, options: []
     )
-    let dailyRows: [[String: Any]]
+    let dailyRows: [Any]
 
     if let dict = json as? [String: Any] {
-      dailyRows = dict["daily"] as? [[String: Any]] ?? []
-    } else if let array = json as? [[String: Any]] {
+      guard let rows = dict["daily"] as? [Any] else {
+        throw FetchError.invalidOutput
+      }
+      dailyRows = rows
+    } else if let array = json as? [Any] {
       dailyRows = array
     } else {
       throw FetchError.invalidOutput
     }
 
-    return dailyRows.compactMap { row in
-      guard let dateKey = row["date"] as? String else {
-        return nil
+    var totals: [DailyTotal] = []
+    for rawRow in dailyRows {
+      guard
+        let row = rawRow as? [String: Any],
+        let dateKey = row["date"] as? String,
+        !dateKey.isEmpty,
+        let cost = parseNumber(row["totalCost"])
+      else {
+        throw FetchError.invalidOutput
       }
-      guard let cost = parseNumber(row["totalCost"]) else {
-        return nil
-      }
-      let modelBreakdowns = parseModelBreakdowns(row["modelBreakdowns"])
-      let machineBreakdowns = parseMachineBreakdowns(row["machineBreakdowns"])
-      return DailyTotal(
-        dateKey: dateKey,
-        cost: cost,
-        modelBreakdowns: modelBreakdowns,
-        machineBreakdowns: machineBreakdowns)
+      let modelBreakdowns = try parseModelBreakdowns(row["modelBreakdowns"])
+      let machineBreakdowns = try parseMachineBreakdowns(row["machineBreakdowns"])
+      totals.append(
+        DailyTotal(
+          dateKey: dateKey,
+          cost: cost,
+          modelBreakdowns: modelBreakdowns,
+          machineBreakdowns: machineBreakdowns))
     }
+    return totals
   }
 
-  private static func parseModelBreakdowns(_ value: Any?) -> [DailyModelBreakdown]? {
+  private static func parseModelBreakdowns(_ value: Any?) throws -> [DailyModelBreakdown]? {
     guard let value else { return nil }
-    guard let rows = value as? [[String: Any]] else { return nil }
+    guard let rows = value as? [Any] else { throw FetchError.invalidOutput }
     var modelBreakdowns: [DailyModelBreakdown] = []
-    for row in rows {
-      guard let modelName = row["modelName"] as? String, !modelName.isEmpty else {
-        return nil
-      }
-      guard let cost = parseNumber(row["cost"]) else {
-        return nil
+    for rawRow in rows {
+      guard
+        let row = rawRow as? [String: Any],
+        let modelName = row["modelName"] as? String,
+        !modelName.isEmpty,
+        let cost = parseNumber(row["cost"])
+      else {
+        throw FetchError.invalidOutput
       }
       modelBreakdowns.append(DailyModelBreakdown(modelName: modelName, cost: cost))
     }
     return modelBreakdowns
   }
 
-  private static func parseMachineBreakdowns(_ value: Any?) -> [DailyMachineBreakdown]? {
+  private static func parseMachineBreakdowns(_ value: Any?) throws -> [DailyMachineBreakdown]? {
     guard let value else { return nil }
-    guard let rows = value as? [[String: Any]] else { return nil }
+    guard let rows = value as? [Any] else { throw FetchError.invalidOutput }
     var breakdowns: [DailyMachineBreakdown] = []
-    for row in rows {
-      guard let machineName = row["machineName"] as? String, !machineName.isEmpty else {
-        return nil
-      }
-      guard let cost = parseNumber(row["cost"]) else {
-        return nil
+    for rawRow in rows {
+      guard
+        let row = rawRow as? [String: Any],
+        let machineName = row["machineName"] as? String,
+        !machineName.isEmpty,
+        let cost = parseNumber(row["cost"])
+      else {
+        throw FetchError.invalidOutput
       }
       breakdowns.append(DailyMachineBreakdown(machineName: machineName, cost: cost))
     }
@@ -418,6 +481,10 @@ extension UsageFetcher.FetchError: LocalizedError {
         + "or set the path in Settings."
     case .invalidServerURL(let url):
       return "Invalid agentsview server URL: \(url)"
+    case .unsupportedTimezone:
+      return
+        "A current agentsview release with --timezone support is required. "
+        + "Update agentsview and try again."
     }
   }
 }

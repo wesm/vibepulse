@@ -19,15 +19,26 @@ struct UsageAgent: Hashable, Identifiable, Comparable, Sendable {
   }
 
   var dailyCommand: [String] {
+    dailyCommand(in: .autoupdatingCurrent)
+  }
+
+  func dailyCommand(in timeZone: TimeZone) -> [String] {
     [
       "agentsview", "usage", "daily", "--format", "json", "--breakdown", "--agent",
-      rawValue, "--since", "30d", "--no-sync",
+      rawValue, "--since", "30d", "--timezone", timeZone.identifier, "--no-sync",
     ]
   }
 
-  static let discoveryCommand = [
-    "agentsview", "usage", "daily", "--format", "json", "--breakdown", "--since", "30d",
-  ]
+  static var discoveryCommand: [String] {
+    discoveryCommand(in: .autoupdatingCurrent)
+  }
+
+  static func discoveryCommand(in timeZone: TimeZone) -> [String] {
+    [
+      "agentsview", "usage", "daily", "--format", "json", "--breakdown", "--since",
+      "30d", "--timezone", timeZone.identifier,
+    ]
+  }
 
   static let claude = UsageAgent("claude")
   static let codex = UsageAgent("codex")

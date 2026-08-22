@@ -28,14 +28,17 @@ enum UsageSeriesAggregation {
     }
   }
 
-  static func dailyMachineSeries(from rollups: [MachineDailyRollup]) -> [UsageSeriesPoint] {
+  static func dailyMachineSeries(
+    from rollups: [MachineDailyRollup],
+    timeZone: TimeZone = .autoupdatingCurrent
+  ) -> [UsageSeriesPoint] {
     let totals = Dictionary(grouping: rollups) {
       MachineDailyKey(dateKey: $0.dateKey, machineName: $0.machineName)
     }
     .mapValues { $0.reduce(0) { $0 + $1.totalCost } }
 
     return totals.compactMap { key, totalCost in
-      guard let date = DateHelper.date(fromKey: key.dateKey) else {
+      guard let date = DateHelper.date(fromKey: key.dateKey, in: timeZone) else {
         return nil
       }
       return UsageSeriesPoint(

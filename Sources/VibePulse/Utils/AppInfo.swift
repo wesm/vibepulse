@@ -20,7 +20,7 @@ enum AppInfo {
   }
 
   static var currentYear: String {
-    let year = Calendar.current.component(.year, from: Date())
+    let year = Calendar.autoupdatingCurrent.component(.year, from: Date())
     return String(year)
   }
 }

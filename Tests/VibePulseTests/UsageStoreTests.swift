@@ -4,6 +4,416 @@ import XCTest
 @testable import VibePulse
 
 final class UsageStoreTests: XCTestCase {
+  func testCurrentDayInvalidationUsesRecordedAtInsteadOfDateKey() throws {
+    let store = try UsageStore(path: ":memory:")
+    let recordedAt = try XCTUnwrap(
+      ISO8601DateFormatter().date(from: "2026-08-22T01:30:00Z"))
+    let oldTimeZone = try XCTUnwrap(TimeZone(identifier: "UTC"))
+    let newTimeZone = try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles"))
+    let oldContext = UsageDateContext(now: recordedAt, timeZone: oldTimeZone)
+    let newContext = UsageDateContext(now: recordedAt, timeZone: newTimeZone)
+    let priorRecordedAt = newContext.startOfToday.addingTimeInterval(-1)
+    let priorContext = UsageDateContext(now: priorRecordedAt, timeZone: newTimeZone)
+
+    try store.insertSample(
+      tool: .claude,
+      totalCost: 100,
+      recordedAt: recordedAt,
+      dateContext: oldContext)
+    try store.insertModelSamplesForRefresh(
+      tool: .claude,
+      modelBreakdowns: [DailyModelBreakdown(modelName: "model", cost: 100)],
+      recordedAt: recordedAt,
+      dateContext: oldContext)
+    try store.insertMachineSamplesForRefresh(
+      tool: .claude,
+      machineBreakdowns: [DailyMachineBreakdown(machineName: "machine", cost: 100)],
+      recordedAt: recordedAt,
+      dateContext: oldContext)
+
+    try store.insertSample(
+      tool: .claude,
+      totalCost: 5,
+      recordedAt: priorRecordedAt,
+      dateContext: priorContext)
+    try store.insertModelSamplesForRefresh(
+      tool: .claude,
+      modelBreakdowns: [DailyModelBreakdown(modelName: "model", cost: 5)],
+      recordedAt: priorRecordedAt,
+      dateContext: priorContext)
+    try store.insertMachineSamplesForRefresh(
+      tool: .claude,
+      machineBreakdowns: [DailyMachineBreakdown(machineName: "machine", cost: 5)],
+      recordedAt: priorRecordedAt,
+      dateContext: priorContext)
+
+    try store.deleteCurrentDaySamples(using: newContext)
+
+    XCTAssertEqual(
+      store.fetchSamples(tool: .claude, from: Date.distantPast, to: Date.distantFuture)
+        .map(\.recordedAt),
+      [priorRecordedAt])
+    XCTAssertEqual(
+      store.fetchModelSamples(
+        tools: [.claude], from: Date.distantPast, to: Date.distantFuture
+      )
+      .map(\.recordedAt),
+      [priorRecordedAt])
+    XCTAssertEqual(
+      store.fetchMachineSamples(
+        tools: [.claude], from: Date.distantPast, to: Date.distantFuture
+      )
+      .map(\.recordedAt),
+      [priorRecordedAt])
+  }
+
+  func testCurrentDayInvalidationRemovesOldTimezoneDateKeyCollisions() throws {
+    let store = try UsageStore(path: ":memory:")
+    let newNow = try XCTUnwrap(
+      ISO8601DateFormatter().date(from: "2026-08-22T01:30:00Z"))
+    let oldSampleRecordedAt =
+      newNow
+      .addingTimeInterval(-19 * 60 * 60)
+    let oldTimeZone = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
+    let newTimeZone = try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles"))
+    let oldContext = UsageDateContext(now: oldSampleRecordedAt, timeZone: oldTimeZone)
+    let newContext = UsageDateContext(now: newNow, timeZone: newTimeZone)
+
+    XCTAssertEqual(oldContext.todayKey, newContext.todayKey)
+    XCTAssertLessThan(oldSampleRecordedAt, newContext.startOfToday)
+
+    try store.insertSample(
+      tool: .claude,
+      totalCost: 100,
+      recordedAt: oldSampleRecordedAt,
+      dateContext: oldContext)
+    try store.insertModelSamplesForRefresh(
+      tool: .claude,
+      modelBreakdowns: [DailyModelBreakdown(modelName: "model", cost: 100)],
+      recordedAt: oldSampleRecordedAt,
+      dateContext: oldContext)
+    try store.insertMachineSamplesForRefresh(
+      tool: .claude,
+      machineBreakdowns: [DailyMachineBreakdown(machineName: "machine", cost: 100)],
+      recordedAt: oldSampleRecordedAt,
+      dateContext: oldContext)
+
+    try store.deleteCurrentDaySamples(using: newContext)
+    XCTAssertEqual(try store.backfillSampleDeltas(), 0)
+    XCTAssertEqual(try store.backfillModelSampleDeltas(), 0)
+    XCTAssertEqual(try store.backfillMachineSampleDeltas(), 0)
+
+    XCTAssertTrue(
+      store.fetchSamples(tool: .claude, from: Date.distantPast, to: Date.distantFuture).isEmpty)
+    XCTAssertTrue(
+      store.fetchModelSamples(
+        tools: [.claude], from: Date.distantPast, to: Date.distantFuture
+      ).isEmpty)
+    XCTAssertTrue(
+      store.fetchMachineSamples(
+        tools: [.claude], from: Date.distantPast, to: Date.distantFuture
+      ).isEmpty)
+  }
+
+  func testSampleBreakdownDeltasUseRecordedAtIntervalAcrossTimezoneDateKeys() throws {
+    let store = try UsageStore(path: ":memory:")
+    let first = try XCTUnwrap(
+      ISO8601DateFormatter().date(from: "2026-08-22T01:30:00Z"))
+    let second = first.addingTimeInterval(60 * 10)
+    let oldContext = UsageDateContext(
+      now: first,
+      timeZone: try XCTUnwrap(TimeZone(identifier: "UTC")))
+    let newContext = UsageDateContext(
+      now: second,
+      timeZone: try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles")))
+
+    try store.insertSample(
+      tool: .claude, totalCost: 100, recordedAt: first, dateContext: oldContext)
+    try store.insertSample(
+      tool: .claude, totalCost: 110, recordedAt: second, dateContext: newContext)
+    try store.insertModelSample(
+      tool: .claude,
+      modelName: "model",
+      totalCost: 100,
+      recordedAt: first,
+      dateContext: oldContext)
+    try store.insertModelSample(
+      tool: .claude,
+      modelName: "model",
+      totalCost: 110,
+      recordedAt: second,
+      dateContext: newContext)
+    try store.insertMachineSample(
+      tool: .claude,
+      machineName: "machine",
+      totalCost: 100,
+      recordedAt: first,
+      dateContext: oldContext)
+    try store.insertMachineSample(
+      tool: .claude,
+      machineName: "machine",
+      totalCost: 110,
+      recordedAt: second,
+      dateContext: newContext)
+
+    XCTAssertEqual(
+      store.fetchSamples(tool: .claude, from: first, to: second).map(\.deltaCost),
+      [100, 10])
+    XCTAssertEqual(
+      store.fetchModelSamples(tools: [.claude], from: first, to: second).map(\.deltaCost),
+      [100, 10])
+    XCTAssertEqual(
+      store.fetchMachineSamples(tools: [.claude], from: first, to: second).map(\.deltaCost),
+      [100, 10])
+  }
+
+  func testDailyRollupReadsRespectInclusiveDateBounds() throws {
+    let store = try UsageStore(path: ":memory:")
+    let context = UsageDateContext(
+      now: try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-08-22T12:00:00Z")),
+      timeZone: try XCTUnwrap(TimeZone(identifier: "UTC")))
+    let totals = [
+      DailyTotal(
+        dateKey: "2026-07-01",
+        cost: 1,
+        modelBreakdowns: [DailyModelBreakdown(modelName: "model", cost: 1)],
+        machineBreakdowns: [DailyMachineBreakdown(machineName: "machine", cost: 1)]),
+      DailyTotal(
+        dateKey: "2026-07-02",
+        cost: 2,
+        modelBreakdowns: [DailyModelBreakdown(modelName: "model", cost: 2)],
+        machineBreakdowns: [DailyMachineBreakdown(machineName: "machine", cost: 2)]),
+      DailyTotal(
+        dateKey: "2026-07-03",
+        cost: 3,
+        modelBreakdowns: [DailyModelBreakdown(modelName: "model", cost: 3)],
+        machineBreakdowns: [DailyMachineBreakdown(machineName: "machine", cost: 3)]),
+    ]
+    try store.upsertDailyTotals(tool: .claude, totals: totals, dateContext: context)
+
+    XCTAssertEqual(
+      store.fetchDailyRollups(
+        since: "2026-07-02", through: "2026-07-02", timeZone: context.timeZone
+      )
+      .map(\.dateKey),
+      ["2026-07-02"])
+    XCTAssertEqual(
+      store.fetchModelDailyRollups(
+        since: "2026-07-02", through: "2026-07-02", tools: [.claude], timeZone: context.timeZone
+      )
+      .map(\.dateKey),
+      ["2026-07-02"])
+    XCTAssertEqual(
+      store.fetchMachineDailyRollups(
+        since: "2026-07-02", through: "2026-07-02", tools: [.claude], timeZone: context.timeZone
+      )
+      .map(\.dateKey),
+      ["2026-07-02"])
+  }
+
+  func testReplaceDailyTotalsRemovesMissingRollupsWithinRefreshWindow() throws {
+    let store = try UsageStore(path: ":memory:")
+    let context = UsageDateContext(
+      now: try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-08-22T12:00:00Z")),
+      timeZone: try XCTUnwrap(TimeZone(identifier: "UTC")))
+    let staleDate = context.calendar.date(byAdding: .day, value: -1, to: context.startOfToday)!
+    let outsideDate = context.calendar.date(byAdding: .day, value: -30, to: context.startOfToday)!
+    let futureDate = context.calendar.date(byAdding: .day, value: 1, to: context.startOfToday)!
+    let staleDateKey = DateHelper.dateKey(for: staleDate, in: context.timeZone)
+    let outsideDateKey = DateHelper.dateKey(for: outsideDate, in: context.timeZone)
+    let futureDateKey = DateHelper.dateKey(for: futureDate, in: context.timeZone)
+
+    try store.upsertDailyTotals(
+      tool: .claude,
+      totals: [
+        DailyTotal(
+          dateKey: staleDateKey,
+          cost: 2,
+          modelBreakdowns: [DailyModelBreakdown(modelName: "old-model", cost: 2)],
+          machineBreakdowns: [DailyMachineBreakdown(machineName: "old-machine", cost: 2)]),
+        DailyTotal(
+          dateKey: context.todayKey,
+          cost: 3,
+          modelBreakdowns: [DailyModelBreakdown(modelName: "old-model", cost: 3)],
+          machineBreakdowns: [DailyMachineBreakdown(machineName: "old-machine", cost: 3)]),
+        DailyTotal(
+          dateKey: outsideDateKey,
+          cost: 4,
+          modelBreakdowns: [DailyModelBreakdown(modelName: "old-model", cost: 4)],
+          machineBreakdowns: [DailyMachineBreakdown(machineName: "old-machine", cost: 4)]),
+        DailyTotal(
+          dateKey: futureDateKey,
+          cost: 5,
+          modelBreakdowns: [DailyModelBreakdown(modelName: "old-model", cost: 5)],
+          machineBreakdowns: [DailyMachineBreakdown(machineName: "old-machine", cost: 5)]),
+      ],
+      dateContext: context)
+
+    try store.replaceDailyTotals(
+      tool: .claude,
+      totals: [
+        DailyTotal(
+          dateKey: context.todayKey,
+          cost: 7,
+          modelBreakdowns: [DailyModelBreakdown(modelName: "new-model", cost: 7)],
+          machineBreakdowns: [DailyMachineBreakdown(machineName: "new-machine", cost: 7)])
+      ],
+      dateContext: context)
+
+    XCTAssertEqual(
+      store.fetchDailyRollups(
+        since: context.usageWindowStartKey,
+        through: futureDateKey,
+        timeZone: context.timeZone
+      )
+      .map(\.dateKey),
+      [context.todayKey])
+    XCTAssertEqual(
+      store.fetchModelDailyRollups(
+        since: context.usageWindowStartKey,
+        through: futureDateKey,
+        tools: [.claude],
+        timeZone: context.timeZone
+      )
+      .map(\.modelName),
+      ["new-model"])
+    XCTAssertEqual(
+      store.fetchMachineDailyRollups(
+        since: context.usageWindowStartKey,
+        through: futureDateKey,
+        tools: [.claude],
+        timeZone: context.timeZone
+      )
+      .map(\.machineName),
+      ["new-machine"])
+    XCTAssertEqual(store.dailyTotal(for: outsideDateKey, tool: .claude), 4)
+  }
+
+  func testRefreshWindowRollupDeletionNormalizesStoredDateKeys() throws {
+    let path = temporaryStorePath()
+    defer { try? FileManager.default.removeItem(atPath: path) }
+    let store = try UsageStore(path: path)
+    let context = UsageDateContext(
+      now: try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-08-22T12:00:00Z")),
+      timeZone: try XCTUnwrap(TimeZone(identifier: "UTC")))
+    let historicalDateKey = "2026-07-02"
+    let staleDateKey = "17 Aug 2026"
+
+    try insertRawDailyRollup(
+      path: path, dateKey: "July 2, 2026", tool: .claude, totalCost: 1)
+    try insertRawDailyRollup(
+      path: path, dateKey: staleDateKey, tool: .claude, totalCost: 2)
+    try insertRawModelDailyRollup(
+      path: path, dateKey: "July 2, 2026", tool: .claude,
+      modelName: "historical-model", totalCost: 1)
+    try insertRawModelDailyRollup(
+      path: path, dateKey: staleDateKey, tool: .claude,
+      modelName: "stale-model", totalCost: 2)
+    try insertRawMachineDailyRollup(
+      path: path, dateKey: "July 2, 2026", tool: .claude,
+      machineName: "historical-machine", totalCost: 1)
+    try insertRawMachineDailyRollup(
+      path: path, dateKey: staleDateKey, tool: .claude,
+      machineName: "stale-machine", totalCost: 2)
+
+    try store.deleteRefreshWindowRollups(using: context)
+
+    XCTAssertEqual(
+      store.fetchDailyRollups(
+        since: historicalDateKey, through: historicalDateKey, timeZone: context.timeZone
+      )
+      .map(\.totalCost),
+      [1])
+    XCTAssertTrue(
+      store.fetchDailyRollups(
+        since: context.usageWindowStartKey,
+        through: context.todayKey,
+        timeZone: context.timeZone
+      ).isEmpty)
+    XCTAssertEqual(
+      store.fetchModelDailyRollups(
+        since: historicalDateKey,
+        through: historicalDateKey,
+        tools: [.claude],
+        timeZone: context.timeZone
+      )
+      .map(\.totalCost),
+      [1])
+    XCTAssertTrue(
+      store.fetchModelDailyRollups(
+        since: context.usageWindowStartKey,
+        through: context.todayKey,
+        tools: [.claude],
+        timeZone: context.timeZone
+      ).isEmpty)
+    XCTAssertEqual(
+      store.fetchMachineDailyRollups(
+        since: historicalDateKey,
+        through: historicalDateKey,
+        tools: [.claude],
+        timeZone: context.timeZone
+      )
+      .map(\.totalCost),
+      [1])
+    XCTAssertTrue(
+      store.fetchMachineDailyRollups(
+        since: context.usageWindowStartKey,
+        through: context.todayKey,
+        tools: [.claude],
+        timeZone: context.timeZone
+      ).isEmpty)
+  }
+
+  func testReplaceDailyTotalsRemovesNoncanonicalBreakdownKeysForReturnedDates() throws {
+    let path = temporaryStorePath()
+    defer { try? FileManager.default.removeItem(atPath: path) }
+    let store = try UsageStore(path: path)
+    let context = UsageDateContext(
+      now: try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-08-22T12:00:00Z")),
+      timeZone: try XCTUnwrap(TimeZone(identifier: "UTC")))
+
+    try insertRawModelDailyRollup(
+      path: path,
+      dateKey: "August 22, 2026",
+      tool: .claude,
+      modelName: "shared-model",
+      totalCost: 4)
+    try insertRawMachineDailyRollup(
+      path: path,
+      dateKey: "August 22, 2026",
+      tool: .claude,
+      machineName: "shared-machine",
+      totalCost: 4)
+
+    try store.replaceDailyTotals(
+      tool: .claude,
+      totals: [
+        DailyTotal(
+          dateKey: context.todayKey,
+          cost: 7,
+          modelBreakdowns: [DailyModelBreakdown(modelName: "shared-model", cost: 7)],
+          machineBreakdowns: [DailyMachineBreakdown(machineName: "shared-machine", cost: 7)])
+      ],
+      dateContext: context)
+
+    XCTAssertEqual(
+      store.fetchModelDailyRollups(
+        since: context.todayKey,
+        through: context.todayKey,
+        tools: [.claude],
+        timeZone: context.timeZone
+      ).map(\.totalCost),
+      [7])
+    XCTAssertEqual(
+      store.fetchMachineDailyRollups(
+        since: context.todayKey,
+        through: context.todayKey,
+        tools: [.claude],
+        timeZone: context.timeZone
+      ).map(\.totalCost),
+      [7])
+  }
+
   func testStoreRoundTripsArbitraryAgentIdentifiers() throws {
     let store = try UsageStore(path: ":memory:")
     let agent = UsageAgent("future-agent")
@@ -582,6 +992,37 @@ final class UsageStoreTests: XCTestCase {
     sqlite3_bind_double(statement, 5, Date().timeIntervalSince1970)
     guard sqlite3_step(statement) == SQLITE_DONE else {
       throw NSError(domain: "UsageStoreTests", code: 3)
+    }
+  }
+
+  private func insertRawDailyRollup(
+    path: String,
+    dateKey: String,
+    tool: UsageAgent,
+    totalCost: Double
+  ) throws {
+    var db: OpaquePointer?
+    guard sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK else {
+      throw NSError(domain: "UsageStoreTests", code: 28)
+    }
+    defer { sqlite3_close(db) }
+
+    let sql = """
+      INSERT INTO daily_rollups (date_key, tool, total_cost, updated_at)
+      VALUES (?, ?, ?, ?);
+      """
+    var statement: OpaquePointer?
+    guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+      throw NSError(domain: "UsageStoreTests", code: 29)
+    }
+    defer { sqlite3_finalize(statement) }
+
+    sqlite3_bind_text(statement, 1, (dateKey as NSString).utf8String, -1, nil)
+    sqlite3_bind_text(statement, 2, (tool.rawValue as NSString).utf8String, -1, nil)
+    sqlite3_bind_double(statement, 3, totalCost)
+    sqlite3_bind_double(statement, 4, Date().timeIntervalSince1970)
+    guard sqlite3_step(statement) == SQLITE_DONE else {
+      throw NSError(domain: "UsageStoreTests", code: 30)
     }
   }
 

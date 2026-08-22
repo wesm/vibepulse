@@ -25,6 +25,7 @@ final class UsageFetcherTests: XCTestCase {
       let queryItems = try XCTUnwrap(components?.queryItems)
       XCTAssertEqual(queryItems.first { $0.name == "from" }?.value, "2026-07-11")
       XCTAssertEqual(queryItems.first { $0.name == "no_default_range" }?.value, "true")
+      XCTAssertEqual(queryItems.first { $0.name == "timezone" }?.value, "America/New_York")
     }
     XCTAssertNil(
       URLComponents(url: discoveryURL, resolvingAgainstBaseURL: false)?.queryItems?
@@ -51,12 +52,16 @@ final class UsageFetcherTests: XCTestCase {
     let fetcher = UsageFetcher(commandRunner: { arguments in
       commands.append(arguments)
       if arguments.contains("--breakdown") {
-        throw UsageFetcher.FetchError.commandFailed("Error: unknown flag: --breakdown")
+        throw UsageFetcher.FetchError.commandFailed(
+          "Error: unknown flag: --breakdown\nUsage: agentsview usage daily [--timezone <zone>]")
       }
       return data
     })
+    let context = UsageDateContext(
+      now: Date(timeIntervalSince1970: 1_750_000_000),
+      timeZone: TimeZone(identifier: "America/New_York")!)
 
-    let totals = try fetcher.fetchDailyTotals(for: .claude)
+    let totals = try fetcher.fetchDailyTotals(for: .claude, using: context)
 
     XCTAssertEqual(totals.map(\.cost), [4.5])
     XCTAssertEqual(commands.count, 2)
@@ -66,8 +71,47 @@ final class UsageFetcherTests: XCTestCase {
       commands[1],
       [
         "agentsview", "usage", "daily", "--format", "json", "--agent", "claude", "--since",
-        "30d", "--no-sync",
+        "30d", "--timezone", "America/New_York", "--no-sync",
       ])
+  }
+
+  func testFetchDailyTotalsRejectsInvalidCalendarDate() throws {
+    let json = #"{"daily":[{"date":"2026-02-30","totalCost":4.5}]}"#
+    let data = try XCTUnwrap(json.data(using: .utf8))
+    let fetcher = UsageFetcher(commandRunner: { _ in data })
+    let context = UsageDateContext(
+      now: Date(timeIntervalSince1970: 1_750_000_000),
+      timeZone: TimeZone(identifier: "America/New_York")!)
+
+    XCTAssertThrowsError(
+      try fetcher.fetchDailyTotals(for: .claude, using: context)
+    ) { error in
+      guard case UsageFetcher.FetchError.invalidOutput = error else {
+        return XCTFail("Expected invalid output, got \(error)")
+      }
+    }
+  }
+
+  func testUnsupportedTimezoneFlagFailsWithoutRetryingAnUnscopedCommand() {
+    var commands: [[String]] = []
+    let fetcher = UsageFetcher(commandRunner: { arguments in
+      commands.append(arguments)
+      throw UsageFetcher.FetchError.commandFailed(
+        "Error: unknown flag: --timezone")
+    })
+    let context = UsageDateContext(
+      now: Date(timeIntervalSince1970: 1_750_000_000),
+      timeZone: TimeZone(identifier: "America/New_York")!)
+
+    XCTAssertThrowsError(
+      try fetcher.fetchDailyTotals(for: .claude, using: context)
+    ) { error in
+      guard case UsageFetcher.FetchError.unsupportedTimezone = error else {
+        return XCTFail("Expected an unsupported timezone error, got \(error)")
+      }
+    }
+    XCTAssertEqual(commands.count, 1)
+    XCTAssertTrue(commands[0].contains("--timezone"))
   }
 
   func testParseDailyTotalsIncludesModelBreakdowns() throws {
@@ -169,7 +213,7 @@ final class UsageFetcherTests: XCTestCase {
     XCTAssertEqual(totals[1].modelBreakdowns?.count, 0)
   }
 
-  func testParseDailyTotalsTreatsPartiallyMalformedModelBreakdownsAsUnavailable() throws {
+  func testParseDailyTotalsRejectsPartiallyMalformedModelBreakdowns() throws {
     let json = """
       {
         "daily": [
@@ -186,9 +230,13 @@ final class UsageFetcherTests: XCTestCase {
       """
     let data = try XCTUnwrap(json.data(using: .utf8))
 
-    let totals = try UsageFetcher.parseDailyTotals(data: data)
-
-    XCTAssertNil(totals[0].modelBreakdowns)
+    XCTAssertThrowsError(
+      try UsageFetcher.parseDailyTotals(data: data)
+    ) { error in
+      guard case UsageFetcher.FetchError.invalidOutput = error else {
+        return XCTFail("Expected invalid output, got \(error)")
+      }
+    }
   }
 
   func testParseDailyTotalsIncludesValidMachineBreakdowns() throws {
@@ -232,9 +280,13 @@ final class UsageFetcherTests: XCTestCase {
       """
     let data = try XCTUnwrap(json.data(using: .utf8))
 
-    let totals = try UsageFetcher.parseDailyTotals(data: data)
-
-    XCTAssertNil(totals[0].machineBreakdowns)
+    XCTAssertThrowsError(
+      try UsageFetcher.parseDailyTotals(data: data)
+    ) { error in
+      guard case UsageFetcher.FetchError.invalidOutput = error else {
+        return XCTFail("Expected invalid output, got \(error)")
+      }
+    }
   }
 
   func testParseDailyTotalsDistinguishesUnavailableMachineBreakdownsFromExplicitEmpty() throws {
@@ -247,11 +299,6 @@ final class UsageFetcherTests: XCTestCase {
           },
           {
             "date": "2026-07-17",
-            "totalCost": 7.25,
-            "machineBreakdowns": "malformed"
-          },
-          {
-            "date": "2026-07-18",
             "totalCost": 4,
             "machineBreakdowns": []
           }
@@ -263,12 +310,25 @@ final class UsageFetcherTests: XCTestCase {
     let totals = try UsageFetcher.parseDailyTotals(data: data)
 
     XCTAssertNil(totals[0].machineBreakdowns)
-    XCTAssertNil(totals[1].machineBreakdowns)
-    XCTAssertNotNil(totals[2].machineBreakdowns)
-    XCTAssertEqual(totals[2].machineBreakdowns?.count, 0)
+    XCTAssertNotNil(totals[1].machineBreakdowns)
+    XCTAssertEqual(totals[1].machineBreakdowns?.count, 0)
   }
 
-  func testParseDailyTotalsRejectsNonFiniteCosts() throws {
+  func testParseDailyTotalsRejectsMalformedMachineBreakdownField() throws {
+    let json =
+      #"{"daily":[{"date":"2026-07-17","totalCost":7.25,"machineBreakdowns":"malformed"}]}"#
+    let data = try XCTUnwrap(json.data(using: .utf8))
+
+    XCTAssertThrowsError(
+      try UsageFetcher.parseDailyTotals(data: data)
+    ) { error in
+      guard case UsageFetcher.FetchError.invalidOutput = error else {
+        return XCTFail("Expected invalid output, got \(error)")
+      }
+    }
+  }
+
+  func testParseDailyTotalsRejectsResponseWithMalformedRow() throws {
     let json = """
       {
         "daily": [
@@ -293,11 +353,31 @@ final class UsageFetcherTests: XCTestCase {
       """
     let data = try XCTUnwrap(json.data(using: .utf8))
 
-    let totals = try UsageFetcher.parseDailyTotals(data: data)
+    XCTAssertThrowsError(
+      try UsageFetcher.parseDailyTotals(data: data)
+    ) { error in
+      guard case UsageFetcher.FetchError.invalidOutput = error else {
+        return XCTFail("Expected invalid output, got \(error)")
+      }
+    }
+  }
 
-    XCTAssertEqual(totals.count, 1)
-    XCTAssertEqual(totals[0].dateKey, "2026-07-04")
-    XCTAssertEqual(totals[0].cost, 4.5, accuracy: 0.001)
+  func testParseDailyTotalsRejectsMissingDailyArray() throws {
+    let data = try XCTUnwrap(#"{"schema_version":4}"#.data(using: .utf8))
+
+    XCTAssertThrowsError(
+      try UsageFetcher.parseDailyTotals(data: data)
+    ) { error in
+      guard case UsageFetcher.FetchError.invalidOutput = error else {
+        return XCTFail("Expected invalid output, got \(error)")
+      }
+    }
+  }
+
+  func testParseDailyTotalsAcceptsEmptyDailyArray() throws {
+    let data = try XCTUnwrap(#"{"daily":[]}"#.data(using: .utf8))
+
+    XCTAssertTrue(try UsageFetcher.parseDailyTotals(data: data).isEmpty)
   }
 
   func testParseDiscoveredAgentsSumsThirtyDayBreakdownsAndDropsZeroCostAgents() throws {

@@ -14,16 +14,116 @@ final class UsageRefreshServiceTests: XCTestCase {
       ])
     let store = try UsageStore(path: ":memory:")
     let service = UsageRefreshService(fetcher: fetcher, store: store)
+    let context = testContext()
 
-    let result = try service.refresh(
-      todayKey: "2026-07-17",
-      sampleTime: Date(timeIntervalSince1970: 1_752_710_400))
+    let result = try service.refresh(context: context)
 
     XCTAssertEqual(result.discoveredAgents, [first, second].sorted())
     XCTAssertEqual(fetcher.requestedAgents, [first, second])
     XCTAssertEqual(store.dailyTotal(for: "2026-07-17", tool: first), 2)
     XCTAssertEqual(store.dailyTotal(for: "2026-07-17", tool: second), 3)
     XCTAssertEqual(result.importErrors, [])
+  }
+
+  func testRefreshReplacesMissingRollupsForSuccessfulAgent() throws {
+    let agent = UsageAgent("future-agent")
+    let context = testContext()
+    let staleDate = context.calendar.date(byAdding: .day, value: -1, to: context.startOfToday)!
+    let staleDateKey = DateHelper.dateKey(for: staleDate, in: context.timeZone)
+    let fetcher = StubUsageFetcher(
+      discoveredAgents: [agent],
+      totalsByAgent: [
+        agent: [
+          DailyTotal(
+            dateKey: context.todayKey,
+            cost: 7,
+            modelBreakdowns: [DailyModelBreakdown(modelName: "new-model", cost: 7)],
+            machineBreakdowns: [DailyMachineBreakdown(machineName: "new-machine", cost: 7)])
+        ]
+      ])
+    let store = try UsageStore(path: ":memory:")
+    try store.upsertDailyTotals(
+      tool: agent,
+      totals: [
+        DailyTotal(
+          dateKey: staleDateKey,
+          cost: 3,
+          modelBreakdowns: [DailyModelBreakdown(modelName: "old-model", cost: 3)],
+          machineBreakdowns: [DailyMachineBreakdown(machineName: "old-machine", cost: 3)])
+      ],
+      dateContext: context)
+    let service = UsageRefreshService(fetcher: fetcher, store: store)
+
+    let result = try service.refresh(context: context)
+
+    XCTAssertEqual(result.importErrors, [])
+    XCTAssertEqual(
+      store.fetchDailyRollups(
+        since: context.usageWindowStartKey,
+        through: context.todayKey,
+        timeZone: context.timeZone
+      )
+      .map(\.dateKey),
+      [context.todayKey])
+    XCTAssertEqual(
+      store.fetchModelDailyRollups(
+        since: context.usageWindowStartKey,
+        through: context.todayKey,
+        tools: [agent],
+        timeZone: context.timeZone
+      )
+      .map(\.modelName),
+      ["new-model"])
+    XCTAssertEqual(
+      store.fetchMachineDailyRollups(
+        since: context.usageWindowStartKey,
+        through: context.todayKey,
+        tools: [agent],
+        timeZone: context.timeZone
+      )
+      .map(\.machineName),
+      ["new-machine"])
+  }
+
+  func testRefreshClearsCurrentDaySnapshotsWhenTodayIsAbsent() throws {
+    let agent = UsageAgent("future-agent")
+    let context = testContext()
+    let fetcher = StubUsageFetcher(
+      discoveredAgents: [agent],
+      totalsByAgent: [
+        agent: [DailyTotal(dateKey: "2026-07-16", cost: 2)]
+      ])
+    let store = try UsageStore(path: ":memory:")
+    try store.insertSample(
+      tool: agent,
+      totalCost: 10,
+      recordedAt: context.now,
+      dateContext: context)
+    try store.insertModelSamplesForRefresh(
+      tool: agent,
+      modelBreakdowns: [DailyModelBreakdown(modelName: "model", cost: 10)],
+      recordedAt: context.now,
+      dateContext: context)
+    try store.insertMachineSamplesForRefresh(
+      tool: agent,
+      machineBreakdowns: [DailyMachineBreakdown(machineName: "machine", cost: 10)],
+      recordedAt: context.now,
+      dateContext: context)
+    let service = UsageRefreshService(fetcher: fetcher, store: store)
+
+    let result = try service.refresh(context: context)
+
+    XCTAssertEqual(result.importErrors, [])
+    XCTAssertTrue(
+      store.fetchSamples(tool: agent, from: context.startOfToday, to: context.now).isEmpty)
+    XCTAssertTrue(
+      store.fetchModelSamples(
+        tools: [agent], from: context.startOfToday, to: context.now
+      ).isEmpty)
+    XCTAssertTrue(
+      store.fetchMachineSamples(
+        tools: [agent], from: context.startOfToday, to: context.now
+      ).isEmpty)
   }
 
   func testRefreshContinuesAfterOneAgentImportFails() throws {
@@ -35,13 +135,58 @@ final class UsageRefreshServiceTests: XCTestCase {
       failingAgents: [failed])
     let store = try UsageStore(path: ":memory:")
     let service = UsageRefreshService(fetcher: fetcher, store: store)
+    let context = testContext()
 
-    let result = try service.refresh(todayKey: "2026-07-17", sampleTime: Date())
+    let result = try service.refresh(context: context)
 
     XCTAssertEqual(fetcher.requestedAgents, [failed, successful])
     XCTAssertEqual(store.dailyTotal(for: "2026-07-17", tool: successful), 3)
     XCTAssertEqual(result.importErrors.count, 1)
     XCTAssertTrue(result.importErrors[0].hasPrefix("Failed Agent:"))
+  }
+
+  func testInvalidationClearsRollupsBeforeFailedAgentImport() throws {
+    let agent = UsageAgent("failed-agent")
+    let context = testContext()
+    let fetcher = StubUsageFetcher(
+      discoveredAgents: [agent],
+      failingAgents: [agent])
+    let store = try UsageStore(path: ":memory:")
+    try store.upsertDailyTotals(
+      tool: agent,
+      totals: [
+        DailyTotal(
+          dateKey: context.todayKey,
+          cost: 3,
+          modelBreakdowns: [DailyModelBreakdown(modelName: "old-model", cost: 3)],
+          machineBreakdowns: [DailyMachineBreakdown(machineName: "old-machine", cost: 3)])
+      ],
+      dateContext: context)
+    let service = UsageRefreshService(fetcher: fetcher, store: store)
+
+    let result = try service.refresh(context: context, invalidateCurrentDay: true)
+
+    XCTAssertEqual(result.importErrors.count, 1)
+    XCTAssertTrue(
+      store.fetchDailyRollups(
+        since: context.usageWindowStartKey,
+        through: context.todayKey,
+        timeZone: context.timeZone
+      ).isEmpty)
+    XCTAssertTrue(
+      store.fetchModelDailyRollups(
+        since: context.usageWindowStartKey,
+        through: context.todayKey,
+        tools: [agent],
+        timeZone: context.timeZone
+      ).isEmpty)
+    XCTAssertTrue(
+      store.fetchMachineDailyRollups(
+        since: context.usageWindowStartKey,
+        through: context.todayKey,
+        tools: [agent],
+        timeZone: context.timeZone
+      ).isEmpty)
   }
 
   func testDiscoveryFailurePreventsImports() throws {
@@ -50,8 +195,37 @@ final class UsageRefreshServiceTests: XCTestCase {
     let service = UsageRefreshService(fetcher: fetcher, store: store)
 
     XCTAssertThrowsError(
-      try service.refresh(todayKey: "2026-07-17", sampleTime: Date()))
+      try service.refresh(context: testContext()))
     XCTAssertEqual(fetcher.requestedAgents, [])
+  }
+
+  func testRefreshInvalidatesCurrentDayBeforeImportingNewTotals() throws {
+    let agent = UsageAgent("future-agent")
+    let context = testContext()
+    let fetcher = StubUsageFetcher(
+      discoveredAgents: [agent],
+      totalsByAgent: [agent: [DailyTotal(dateKey: context.todayKey, cost: 7)]])
+    let store = try UsageStore(path: ":memory:")
+    try store.insertSample(
+      tool: agent,
+      totalCost: 100,
+      recordedAt: context.now,
+      dateContext: UsageDateContext(
+        now: context.now,
+        timeZone: TimeZone(identifier: "UTC")!))
+    let service = UsageRefreshService(fetcher: fetcher, store: store)
+
+    _ = try service.refresh(context: context, invalidateCurrentDay: true)
+
+    let samples = store.fetchSamples(
+      tool: agent, from: context.startOfToday, to: context.now)
+    XCTAssertEqual(samples.map(\.totalCost), [7])
+  }
+
+  private func testContext() -> UsageDateContext {
+    UsageDateContext(
+      now: ISO8601DateFormatter().date(from: "2026-07-17T12:00:00Z")!,
+      timeZone: TimeZone(identifier: "UTC")!)
   }
 }
 
@@ -73,6 +247,7 @@ private final class StubUsageFetcher: UsageFetching, @unchecked Sendable {
   private let failingAgents: Set<UsageAgent>
   private let discoveryError: Error?
   private(set) var requestedAgents: [UsageAgent] = []
+  private(set) var requestedTimeZones: [String] = []
 
   init(
     discoveredAgents: [UsageAgent] = [],
@@ -86,12 +261,16 @@ private final class StubUsageFetcher: UsageFetching, @unchecked Sendable {
     self.discoveryError = discoveryError
   }
 
-  func discoverAgents() throws -> [UsageAgent] {
+  func discoverAgents(using context: UsageDateContext) throws -> [UsageAgent] {
+    requestedTimeZones.append(context.timeZone.identifier)
     if let discoveryError { throw discoveryError }
     return discoveredAgents
   }
 
-  func fetchDailyTotals(for tool: UsageAgent) throws -> [DailyTotal] {
+  func fetchDailyTotals(for tool: UsageAgent, using context: UsageDateContext) throws
+    -> [DailyTotal]
+  {
+    requestedTimeZones.append(context.timeZone.identifier)
     requestedAgents.append(tool)
     if failingAgents.contains(tool) { throw StubError.importFailed }
     return totalsByAgent[tool] ?? []

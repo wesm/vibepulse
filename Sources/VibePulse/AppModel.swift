@@ -63,11 +63,16 @@ final class AppModel: ObservableObject {
   private let settingsWindowController = SettingsWindowController()
   private let welcomeWindowController = WelcomeWindowController()
   private var timer: DispatchSourceTimer?
+  private var timeZoneObserver: NSObjectProtocol?
+  private var timezoneRefreshState: UsageRefreshTimezoneState
   private var isUpdatingLoginItem = false
   private let store: UsageStore
   private let refreshService: UsageRefreshService
 
   init() {
+    timezoneRefreshState = UsageRefreshTimezoneState(
+      lastSuccessfulTimeZone: defaults.string(forKey: DefaultsKey.lastUsageTimeZone),
+      lastInvalidatedTimeZone: defaults.string(forKey: DefaultsKey.lastUsageInvalidatedTimeZone))
     let agentPreferences = AgentPreferences(defaults: defaults)
     agentPreferences.migrateLegacyPreferences()
     self.agentPreferences = agentPreferences
@@ -104,13 +109,34 @@ final class AppModel: ObservableObject {
       statusMessage = "Database unavailable. Running without persistence."
     }
     refreshService = UsageRefreshService(fetcher: UsageFetcher(), store: store)
+    timeZoneObserver = NotificationCenter.default.addObserver(
+      forName: .NSSystemTimeZoneDidChange,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      Task { @MainActor [weak self] in
+        self?.handleSystemTimeZoneChange()
+      }
+    }
 
-    reloadFromStore()
+    let initialContext = UsageDateContext()
+    if !timezoneRefreshState.shouldInvalidateCurrentDay(
+      for: initialContext.timeZone.identifier)
+    {
+      reloadFromStore(context: initialContext)
+    }
     scheduleTimer()
     refreshNow()
     runMaintenanceIfNeeded()
     DispatchQueue.main.async {
       self.showWelcomeIfNeeded()
+    }
+  }
+
+  deinit {
+    timer?.cancel()
+    if let timeZoneObserver {
+      NotificationCenter.default.removeObserver(timeZoneObserver)
     }
   }
 
@@ -120,16 +146,28 @@ final class AppModel: ObservableObject {
     isRefreshing = true
     statusMessage = nil
 
-    let todayKey = DateHelper.dateKey(for: Date())
+    let context = UsageDateContext()
+    let invalidateCurrentDay = timezoneRefreshState.shouldInvalidateCurrentDay(
+      for: context.timeZone.identifier)
+    if invalidateCurrentDay {
+      clearPublishedUsage()
+    }
 
     DispatchQueue.global(qos: .background).async { [refreshService] in
       do {
         let result = try refreshService.refresh(
-          todayKey: todayKey,
-          sampleTime: Date())
+          context: context,
+          invalidateCurrentDay: invalidateCurrentDay)
         let refreshTime = Date()
 
         DispatchQueue.main.async {
+          guard UsageDateContext().timeZone.identifier == context.timeZone.identifier else {
+            self.timezoneRefreshState.markTimezoneChange()
+            self.isRefreshing = false
+            self.refreshNow()
+            return
+          }
+
           self.discoveredAgents = result.discoveredAgents
           self.agentPreferences.saveDiscoveredAgents(result.discoveredAgents)
           if result.importErrors.isEmpty {
@@ -138,17 +176,64 @@ final class AppModel: ObservableObject {
           } else {
             self.statusMessage = result.importErrors.joined(separator: " | ")
           }
-          self.reloadFromStore()
+          self.timezoneRefreshState.completeRefresh(
+            for: context.timeZone.identifier,
+            invalidatedCurrentDay: invalidateCurrentDay,
+            hasImportErrors: !result.importErrors.isEmpty)
+          self.persistTimezoneRefreshState()
+          self.reloadFromStore(context: UsageDateContext())
           self.isRefreshing = false
         }
       } catch {
         DispatchQueue.main.async {
+          let contextStillCurrent =
+            UsageDateContext().timeZone.identifier == context.timeZone.identifier
+          if !contextStillCurrent {
+            self.timezoneRefreshState.markTimezoneChange()
+          }
           self.statusMessage = error.localizedDescription
-          self.reloadFromStore()
+          if contextStillCurrent {
+            self.reloadFromStoreIfTimezoneReady()
+          }
           self.isRefreshing = false
+          if !contextStillCurrent {
+            self.refreshNow()
+          }
         }
       }
     }
+  }
+
+  private func handleSystemTimeZoneChange() {
+    clearPublishedUsage()
+    timezoneRefreshState.markTimezoneChange()
+    refreshNow()
+  }
+
+  private func persistTimezoneRefreshState() {
+    if let lastSuccessfulTimeZone = timezoneRefreshState.lastSuccessfulTimeZone {
+      defaults.set(lastSuccessfulTimeZone, forKey: DefaultsKey.lastUsageTimeZone)
+    }
+    if let lastInvalidatedTimeZone = timezoneRefreshState.lastInvalidatedTimeZone {
+      defaults.set(
+        lastInvalidatedTimeZone,
+        forKey: DefaultsKey.lastUsageInvalidatedTimeZone)
+    }
+  }
+
+  private func clearPublishedUsage() {
+    menuTotalText = Formatters.currencyString(0)
+    hourlySeries = []
+    cumulativeSeries = []
+    dailySeries = []
+    toolTotals = []
+    modelCumulativeSeries = []
+    modelDailySeries = []
+    modelTotals = []
+    machineCumulativeSeries = []
+    machineDailySeries = []
+    machineTotals = []
+    lastUpdated = nil
   }
 
   private func showWelcomeIfNeeded() {
@@ -178,7 +263,7 @@ final class AppModel: ObservableObject {
       disabledAgentIDs.insert(agent.rawValue)
     }
     agentPreferences.saveDisabledAgentIDs(disabledAgentIDs)
-    reloadFromStore()
+    reloadFromStoreIfTimezoneReady()
   }
 
   private var activeTools: [UsageAgent] {
@@ -187,10 +272,10 @@ final class AppModel: ObservableObject {
       disabledAgentIDs: disabledAgentIDs)
   }
 
-  private func reloadFromStore() {
+  private func reloadFromStore(context: UsageDateContext = UsageDateContext()) {
     let tools = activeTools
-    let startOfDay = DateHelper.startOfToday()
-    let now = Date()
+    let startOfDay = context.startOfToday
+    let now = context.now
     var hourlyPoints: [UsageSeriesPoint] = []
 
     for tool in tools {
@@ -199,7 +284,11 @@ final class AppModel: ObservableObject {
       }
       hourlyPoints.append(
         contentsOf: HourlyUsageInferer.inferPoints(
-          tool: tool, samples: samples, startOfDay: startOfDay, end: now))
+          tool: tool,
+          samples: samples,
+          startOfDay: startOfDay,
+          end: now,
+          calendar: context.calendar))
     }
 
     hourlySeries = hourlyPoints.sorted { $0.date < $1.date }
@@ -222,37 +311,68 @@ final class AppModel: ObservableObject {
     let machineSamples = store.fetchMachineSamples(tools: tools, from: startOfDay, to: now)
     machineCumulativeSeries = UsageSeriesAggregation.cumulativeMachineSeries(from: machineSamples)
 
-    let sinceKey = DateHelper.dateKeyDaysAgo(29)
-    let rollups = store.fetchDailyRollups(since: sinceKey)
+    let sinceKey = context.usageWindowStartKey
+    let rollups = store.fetchDailyRollups(
+      since: sinceKey,
+      through: context.todayKey,
+      timeZone: context.timeZone)
     dailySeries = rollups.compactMap { rollup in
-      guard tools.contains(rollup.tool), let date = DateHelper.date(fromKey: rollup.dateKey) else {
+      guard
+        tools.contains(rollup.tool),
+        let date = DateHelper.date(fromKey: rollup.dateKey, in: context.timeZone)
+      else {
         return nil
       }
       return UsageSeriesPoint(tool: rollup.tool, date: date, cost: rollup.totalCost)
     }
 
-    let modelRollups = store.fetchModelDailyRollups(since: sinceKey, tools: tools)
-    modelDailySeries = aggregateModelDailySeries(modelRollups)
-    let machineRollups = store.fetchMachineDailyRollups(since: sinceKey, tools: tools)
-    machineDailySeries = UsageSeriesAggregation.dailyMachineSeries(from: machineRollups)
+    let modelRollups = store.fetchModelDailyRollups(
+      since: sinceKey,
+      through: context.todayKey,
+      tools: tools,
+      timeZone: context.timeZone)
+    modelDailySeries = aggregateModelDailySeries(
+      modelRollups,
+      timeZone: context.timeZone)
+    let machineRollups = store.fetchMachineDailyRollups(
+      since: sinceKey,
+      through: context.todayKey,
+      tools: tools,
+      timeZone: context.timeZone)
+    machineDailySeries = UsageSeriesAggregation.dailyMachineSeries(
+      from: machineRollups,
+      timeZone: context.timeZone)
 
-    let todayKey = DateHelper.dateKey(for: Date())
     var totals: [ToolTotal] = []
     for tool in tools {
-      let dailyTotal = store.dailyTotal(for: todayKey, tool: tool)
-      let sampleTotal = store.latestSample(for: todayKey, tool: tool)?.totalCost
+      let dailyTotal = store.dailyTotal(for: context.todayKey, tool: tool)
+      let sampleTotal = store.latestSample(
+        tool: tool,
+        from: context.startOfToday,
+        to: context.startOfNextDay)?.totalCost
       let totalCost = dailyTotal ?? sampleTotal ?? 0
       totals.append(ToolTotal(tool: tool, totalCost: totalCost))
     }
     toolTotals = totals
-    modelTotals = aggregateModelTotals(modelRollups, todayKey: todayKey)
+    modelTotals = aggregateModelTotals(modelRollups, todayKey: context.todayKey)
     machineTotals = UsageSeriesAggregation.machineTotals(
-      from: machineRollups, dateKey: todayKey)
+      from: machineRollups, dateKey: context.todayKey)
     let combined = totals.reduce(0) { $0 + $1.totalCost }
     menuTotalText = Formatters.currencyString(combined)
   }
 
-  private func aggregateModelDailySeries(_ rollups: [ModelDailyRollup]) -> [UsageSeriesPoint] {
+  private func reloadFromStoreIfTimezoneReady() {
+    let context = UsageDateContext()
+    guard !timezoneRefreshState.shouldDeferStoreReload(for: context.timeZone.identifier) else {
+      return
+    }
+    reloadFromStore(context: context)
+  }
+
+  private func aggregateModelDailySeries(
+    _ rollups: [ModelDailyRollup],
+    timeZone: TimeZone
+  ) -> [UsageSeriesPoint] {
     var totalsByDateAndModel: [ModelDailyKey: Double] = [:]
     for rollup in rollups {
       let key = ModelDailyKey(dateKey: rollup.dateKey, modelName: rollup.modelName)
@@ -260,7 +380,7 @@ final class AppModel: ObservableObject {
     }
 
     return totalsByDateAndModel.compactMap { key, totalCost in
-      guard let date = DateHelper.date(fromKey: key.dateKey) else {
+      guard let date = DateHelper.date(fromKey: key.dateKey, in: timeZone) else {
         return nil
       }
       return UsageSeriesPoint(series: .model(key.modelName), date: date, cost: totalCost)
@@ -321,7 +441,7 @@ final class AppModel: ObservableObject {
           self.maintenanceMessage = message
           self.lastMaintenanceAt = now
           self.defaults.set(now.timeIntervalSince1970, forKey: DefaultsKey.lastMaintenanceAt)
-          self.reloadFromStore()
+          self.reloadFromStoreIfTimezoneReady()
           self.isMaintaining = false
         }
       } catch {
@@ -405,5 +525,7 @@ final class AppModel: ObservableObject {
     static let agentsviewServerURL = "agentsviewServerURL"
     static let maintenanceMode = "maintenanceMode"
     static let lastMaintenanceAt = "lastMaintenanceAt"
+    static let lastUsageTimeZone = "lastUsageTimeZone"
+    static let lastUsageInvalidatedTimeZone = "lastUsageInvalidatedTimeZone"
   }
 }

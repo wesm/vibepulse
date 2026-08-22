@@ -138,7 +138,7 @@ struct UsageChartView: View {
 
   private var dailyHoverPoints: [UsageSeriesPoint] {
     guard let dailyHoverDate else { return [] }
-    let calendar = Calendar.current
+    let calendar = Calendar.autoupdatingCurrent
     return
       dailySeries
       .filter { calendar.isDate($0.date, inSameDayAs: dailyHoverDate) }
@@ -166,8 +166,9 @@ struct UsageChartView: View {
       return
     }
 
-    let day = Calendar.current.startOfDay(for: date)
-    if dailySeries.contains(where: { Calendar.current.isDate($0.date, inSameDayAs: day) }) {
+    let calendar = Calendar.autoupdatingCurrent
+    let day = calendar.startOfDay(for: date)
+    if dailySeries.contains(where: { calendar.isDate($0.date, inSameDayAs: day) }) {
       dailyHoverDate = day
       dailyTooltipPosition = CGPoint(x: plotFrame.minX + 8, y: plotFrame.minY + 8)
     } else {

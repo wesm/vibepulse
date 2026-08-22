@@ -42,40 +42,16 @@ final class UsageStore: @unchecked Sendable {
     sqlite3_close(db)
   }
 
-  func upsertDailyTotals(tool: UsageAgent, totals: [DailyTotal]) throws {
+  func upsertDailyTotals(
+    tool: UsageAgent,
+    totals: [DailyTotal],
+    dateContext: UsageDateContext? = nil
+  ) throws {
+    let context = dateContext ?? UsageDateContext()
     try queue.sync {
       do {
         try execute("BEGIN IMMEDIATE TRANSACTION;")
-        let sql = """
-          INSERT INTO daily_rollups (date_key, tool, total_cost, updated_at)
-          VALUES (?, ?, ?, ?)
-          ON CONFLICT(date_key, tool) DO UPDATE SET
-          total_cost = excluded.total_cost,
-          updated_at = excluded.updated_at;
-          """
-        let updatedAt = Date().timeIntervalSince1970
-        for total in totals {
-          let dateKey = DateHelper.normalizedDateKey(from: total.dateKey) ?? total.dateKey
-          try withStatement(sql) { statement in
-            bindText(statement, index: 1, value: dateKey)
-            bindText(statement, index: 2, value: tool.rawValue)
-            sqlite3_bind_double(statement, 3, total.cost)
-            sqlite3_bind_double(statement, 4, updatedAt)
-            if sqlite3_step(statement) != SQLITE_DONE {
-              throw StoreError.executeFailed(errorMessage)
-            }
-          }
-
-          if let modelBreakdowns = total.modelBreakdowns {
-            try upsertModelDailyTotals(
-              tool: tool, dateKey: dateKey, totals: modelBreakdowns)
-          }
-          if let machineBreakdowns = total.machineBreakdowns {
-            try upsertMachineDailyTotals(
-              tool: tool, dateKey: dateKey, totals: machineBreakdowns)
-          }
-        }
-
+        try upsertDailyTotalsInCurrentQueue(tool: tool, totals: totals, dateContext: context)
         try execute("COMMIT;")
       } catch {
         try? execute("ROLLBACK;")
@@ -84,21 +60,63 @@ final class UsageStore: @unchecked Sendable {
     }
   }
 
-  func insertSample(tool: UsageAgent, totalCost: Double, recordedAt: Date) throws {
+  func replaceDailyTotals(
+    tool: UsageAgent,
+    totals: [DailyTotal],
+    dateContext: UsageDateContext
+  ) throws {
+    let returnedDateKeys = Set(
+      totals.map {
+        DateHelper.normalizedDateKey(from: $0.dateKey, in: dateContext.timeZone) ?? $0.dateKey
+      })
+
+    try queue.sync {
+      do {
+        try execute("BEGIN IMMEDIATE TRANSACTION;")
+        try deleteDailyRollupsForRefreshWindow(tool: tool, dateContext: dateContext)
+        try deleteStaleBreakdownRollups(
+          table: "model_daily_rollups",
+          tool: tool,
+          dateContext: dateContext,
+          retainedDateKeys: returnedDateKeys)
+        try deleteStaleBreakdownRollups(
+          table: "machine_daily_rollups",
+          tool: tool,
+          dateContext: dateContext,
+          retainedDateKeys: returnedDateKeys)
+        try upsertDailyTotalsInCurrentQueue(tool: tool, totals: totals, dateContext: dateContext)
+        try execute("COMMIT;")
+      } catch {
+        try? execute("ROLLBACK;")
+        throw error
+      }
+    }
+  }
+
+  func insertSample(
+    tool: UsageAgent,
+    totalCost: Double,
+    recordedAt: Date,
+    dateContext: UsageDateContext? = nil
+  ) throws {
+    let context = dateContext ?? UsageDateContext(now: recordedAt)
     try queue.sync {
       let sql = """
         INSERT INTO samples (tool, recorded_at, total_cost, delta_cost, date_key)
         VALUES (?, ?, ?, ?, ?);
         """
-      let dateKey = DateHelper.dateKey(for: recordedAt)
-      let previousTotal = try latestSampleCost(for: dateKey, tool: tool) ?? 0
+      let previousTotal =
+        try latestSampleCost(
+          for: tool,
+          from: context.startOfToday,
+          to: context.startOfNextDay) ?? 0
       let deltaCost = max(0, totalCost - previousTotal)
       try withStatement(sql) { statement in
         bindText(statement, index: 1, value: tool.rawValue)
         sqlite3_bind_double(statement, 2, recordedAt.timeIntervalSince1970)
         sqlite3_bind_double(statement, 3, totalCost)
         sqlite3_bind_double(statement, 4, deltaCost)
-        bindText(statement, index: 5, value: dateKey)
+        bindText(statement, index: 5, value: context.todayKey)
         if sqlite3_step(statement) != SQLITE_DONE {
           throw StoreError.executeFailed(errorMessage)
         }
@@ -161,7 +179,11 @@ final class UsageStore: @unchecked Sendable {
     }
   }
 
-  func fetchDailyRollups(since dateKey: String) -> [DailyRollup] {
+  func fetchDailyRollups(
+    since dateKey: String,
+    through endDateKey: String? = nil,
+    timeZone: TimeZone = .autoupdatingCurrent
+  ) -> [DailyRollup] {
     queue.sync {
       let sql = """
         SELECT date_key, tool, total_cost
@@ -177,10 +199,11 @@ final class UsageStore: @unchecked Sendable {
               continue
             }
             let rawKey = String(cString: dateKeyCString)
-            guard let normalizedKey = DateHelper.normalizedDateKey(from: rawKey) else {
+            guard let normalizedKey = DateHelper.normalizedDateKey(from: rawKey, in: timeZone)
+            else {
               continue
             }
-            if normalizedKey < dateKey {
+            if normalizedKey < dateKey || normalizedKey > (endDateKey ?? normalizedKey) {
               continue
             }
             let toolRaw = String(cString: toolCString)
@@ -197,7 +220,12 @@ final class UsageStore: @unchecked Sendable {
     }
   }
 
-  func fetchModelDailyRollups(since dateKey: String, tools: [UsageAgent]) -> [ModelDailyRollup] {
+  func fetchModelDailyRollups(
+    since dateKey: String,
+    through endDateKey: String? = nil,
+    tools: [UsageAgent],
+    timeZone: TimeZone = .autoupdatingCurrent
+  ) -> [ModelDailyRollup] {
     queue.sync {
       let toolValues = Set(tools.map(\.rawValue))
       let sql = """
@@ -215,10 +243,11 @@ final class UsageStore: @unchecked Sendable {
               continue
             }
             let rawKey = String(cString: dateKeyCString)
-            guard let normalizedKey = DateHelper.normalizedDateKey(from: rawKey) else {
+            guard let normalizedKey = DateHelper.normalizedDateKey(from: rawKey, in: timeZone)
+            else {
               continue
             }
-            if normalizedKey < dateKey {
+            if normalizedKey < dateKey || normalizedKey > (endDateKey ?? normalizedKey) {
               continue
             }
             let toolRaw = String(cString: toolCString)
@@ -250,7 +279,10 @@ final class UsageStore: @unchecked Sendable {
   }
 
   func fetchMachineDailyRollups(
-    since dateKey: String, tools: [UsageAgent]
+    since dateKey: String,
+    through endDateKey: String? = nil,
+    tools: [UsageAgent],
+    timeZone: TimeZone = .autoupdatingCurrent
   ) -> [MachineDailyRollup] {
     queue.sync {
       let allowedTools = Set(tools)
@@ -270,10 +302,11 @@ final class UsageStore: @unchecked Sendable {
               continue
             }
             let rawKey = String(cString: dateCString)
-            guard let normalizedKey = DateHelper.normalizedDateKey(from: rawKey) else {
+            guard let normalizedKey = DateHelper.normalizedDateKey(from: rawKey, in: timeZone)
+            else {
               continue
             }
-            if normalizedKey < dateKey {
+            if normalizedKey < dateKey || normalizedKey > (endDateKey ?? normalizedKey) {
               continue
             }
             let toolRaw = String(cString: toolCString)
@@ -328,19 +361,20 @@ final class UsageStore: @unchecked Sendable {
     }
   }
 
-  func latestSample(for dateKey: String, tool: UsageAgent) -> UsageSample? {
+  func latestSample(tool: UsageAgent, from start: Date, to end: Date) -> UsageSample? {
     queue.sync {
       let sql = """
         SELECT recorded_at, total_cost, delta_cost
         FROM samples
-        WHERE date_key = ? AND tool = ?
+        WHERE tool = ? AND recorded_at >= ? AND recorded_at < ?
         ORDER BY recorded_at DESC
         LIMIT 1;
         """
       do {
         return try withStatement(sql) { statement in
-          bindText(statement, index: 1, value: dateKey)
-          bindText(statement, index: 2, value: tool.rawValue)
+          bindText(statement, index: 1, value: tool.rawValue)
+          sqlite3_bind_double(statement, 2, start.timeIntervalSince1970)
+          sqlite3_bind_double(statement, 3, end.timeIntervalSince1970)
           if sqlite3_step(statement) == SQLITE_ROW {
             let recordedAt = Date(timeIntervalSince1970: sqlite3_column_double(statement, 0))
             let totalCost = sqlite3_column_double(statement, 1)
@@ -356,35 +390,99 @@ final class UsageStore: @unchecked Sendable {
     }
   }
 
+  func deleteCurrentDaySamples(using context: UsageDateContext) throws {
+    try deleteCurrentDaySamples(tool: nil, context: context)
+  }
+
+  func deleteCurrentDaySamples(for tool: UsageAgent, using context: UsageDateContext) throws {
+    try deleteCurrentDaySamples(tool: tool, context: context)
+  }
+
+  private func deleteCurrentDaySamples(tool: UsageAgent?, context: UsageDateContext) throws {
+    try queue.sync {
+      do {
+        try execute("BEGIN IMMEDIATE TRANSACTION;")
+        let toolClause = tool == nil ? "" : " AND tool = ?"
+        for table in ["samples", "model_samples", "machine_samples"] {
+          let sql = """
+            DELETE FROM \(table)
+            WHERE ((recorded_at >= ? AND recorded_at < ?) OR date_key = ?)\(toolClause);
+            """
+          try withStatement(sql) { statement in
+            sqlite3_bind_double(statement, 1, context.startOfToday.timeIntervalSince1970)
+            sqlite3_bind_double(statement, 2, context.startOfNextDay.timeIntervalSince1970)
+            bindText(statement, index: 3, value: context.todayKey)
+            if let tool {
+              bindText(statement, index: 4, value: tool.rawValue)
+            }
+            if sqlite3_step(statement) != SQLITE_DONE {
+              throw StoreError.executeFailed(errorMessage)
+            }
+          }
+        }
+        try execute("COMMIT;")
+      } catch {
+        try? execute("ROLLBACK;")
+        throw error
+      }
+    }
+  }
+
+  func deleteRefreshWindowRollups(using context: UsageDateContext) throws {
+    try queue.sync {
+      do {
+        try execute("BEGIN IMMEDIATE TRANSACTION;")
+        for table in ["daily_rollups", "model_daily_rollups", "machine_daily_rollups"] {
+          try deleteRollupsInCurrentQueue(
+            table: table,
+            tool: nil,
+            timeZone: context.timeZone,
+            shouldDelete: { $0 >= context.usageWindowStartKey })
+        }
+        try execute("COMMIT;")
+      } catch {
+        try? execute("ROLLBACK;")
+        throw error
+      }
+    }
+  }
+
   func insertModelSample(
     tool: UsageAgent,
     modelName: String,
     totalCost: Double,
-    recordedAt: Date
+    recordedAt: Date,
+    dateContext: UsageDateContext? = nil
   ) throws {
+    let context = dateContext ?? UsageDateContext(now: recordedAt)
     try queue.sync {
       try insertModelSampleInCurrentQueue(
         tool: tool,
         modelName: modelName,
         totalCost: totalCost,
-        recordedAt: recordedAt)
+        recordedAt: recordedAt,
+        dateContext: context)
     }
   }
 
   func insertModelSamplesForRefresh(
     tool: UsageAgent,
     modelBreakdowns: [DailyModelBreakdown],
-    recordedAt: Date
+    recordedAt: Date,
+    dateContext: UsageDateContext? = nil
   ) throws {
+    let context = dateContext ?? UsageDateContext(now: recordedAt)
     try queue.sync {
       do {
         try execute("BEGIN IMMEDIATE TRANSACTION;")
 
-        let dateKey = DateHelper.dateKey(for: recordedAt)
         let currentTotals = Dictionary(
           modelBreakdowns.map { ($0.modelName, $0.cost) },
           uniquingKeysWith: { _, new in new })
-        let previousModels = try modelSampleNames(for: dateKey, tool: tool)
+        let previousModels = try modelSampleNames(
+          for: tool,
+          from: context.startOfToday,
+          to: context.startOfNextDay)
         let modelNames = Set(currentTotals.keys).union(previousModels).sorted()
 
         for modelName in modelNames {
@@ -392,7 +490,8 @@ final class UsageStore: @unchecked Sendable {
             tool: tool,
             modelName: modelName,
             totalCost: currentTotals[modelName] ?? 0,
-            recordedAt: recordedAt)
+            recordedAt: recordedAt,
+            dateContext: context)
         }
 
         try execute("COMMIT;")
@@ -451,31 +550,38 @@ final class UsageStore: @unchecked Sendable {
     tool: UsageAgent,
     machineName: String,
     totalCost: Double,
-    recordedAt: Date
+    recordedAt: Date,
+    dateContext: UsageDateContext? = nil
   ) throws {
+    let context = dateContext ?? UsageDateContext(now: recordedAt)
     try queue.sync {
       try insertMachineSampleInCurrentQueue(
         tool: tool,
         machineName: machineName,
         totalCost: totalCost,
-        recordedAt: recordedAt)
+        recordedAt: recordedAt,
+        dateContext: context)
     }
   }
 
   func insertMachineSamplesForRefresh(
     tool: UsageAgent,
     machineBreakdowns: [DailyMachineBreakdown],
-    recordedAt: Date
+    recordedAt: Date,
+    dateContext: UsageDateContext? = nil
   ) throws {
+    let context = dateContext ?? UsageDateContext(now: recordedAt)
     try queue.sync {
       do {
         try execute("BEGIN IMMEDIATE TRANSACTION;")
 
-        let dateKey = DateHelper.dateKey(for: recordedAt)
         let currentTotals = Dictionary(
           machineBreakdowns.map { ($0.machineName, $0.cost) },
           uniquingKeysWith: { _, new in new })
-        let previousMachines = try machineSampleNames(for: dateKey, tool: tool)
+        let previousMachines = try machineSampleNames(
+          for: tool,
+          from: context.startOfToday,
+          to: context.startOfNextDay)
         let machineNames = Set(currentTotals.keys).union(previousMachines).sorted()
 
         for machineName in machineNames {
@@ -483,7 +589,8 @@ final class UsageStore: @unchecked Sendable {
             tool: tool,
             machineName: machineName,
             totalCost: currentTotals[machineName] ?? 0,
-            recordedAt: recordedAt)
+            recordedAt: recordedAt,
+            dateContext: context)
         }
 
         try execute("COMMIT;")
@@ -1242,6 +1349,115 @@ final class UsageStore: @unchecked Sendable {
     }
   }
 
+  private func upsertDailyTotalsInCurrentQueue(
+    tool: UsageAgent,
+    totals: [DailyTotal],
+    dateContext: UsageDateContext
+  ) throws {
+    for total in totals {
+      let dateKey =
+        DateHelper.normalizedDateKey(from: total.dateKey, in: dateContext.timeZone)
+        ?? total.dateKey
+      try upsertDailyTotal(tool: tool, dateKey: dateKey, totalCost: total.cost)
+
+      if let modelBreakdowns = total.modelBreakdowns {
+        try upsertModelDailyTotals(
+          tool: tool,
+          dateKey: dateKey,
+          totals: modelBreakdowns,
+          timeZone: dateContext.timeZone)
+      }
+      if let machineBreakdowns = total.machineBreakdowns {
+        try upsertMachineDailyTotals(
+          tool: tool,
+          dateKey: dateKey,
+          totals: machineBreakdowns,
+          timeZone: dateContext.timeZone)
+      }
+    }
+  }
+
+  private func deleteRollupsInCurrentQueue(
+    table: String,
+    tool: UsageAgent?,
+    timeZone: TimeZone,
+    shouldDelete: (String) -> Bool
+  ) throws {
+    let selectSQL: String
+    if tool == nil {
+      selectSQL = "SELECT date_key FROM \(table);"
+    } else {
+      selectSQL = "SELECT date_key FROM \(table) WHERE tool = ?;"
+    }
+
+    var rawDateKeys = Set<String>()
+    try withStatement(selectSQL) { statement in
+      if let tool {
+        bindText(statement, index: 1, value: tool.rawValue)
+      }
+      while sqlite3_step(statement) == SQLITE_ROW {
+        guard let dateKeyCString = sqlite3_column_text(statement, 0) else { continue }
+        let rawDateKey = String(cString: dateKeyCString)
+        guard
+          let normalizedDateKey = DateHelper.normalizedDateKey(
+            from: rawDateKey, in: timeZone),
+          shouldDelete(normalizedDateKey)
+        else {
+          continue
+        }
+        rawDateKeys.insert(rawDateKey)
+      }
+    }
+
+    let deleteSQL: String
+    if tool == nil {
+      deleteSQL = "DELETE FROM \(table) WHERE date_key = ?;"
+    } else {
+      deleteSQL = "DELETE FROM \(table) WHERE tool = ? AND date_key = ?;"
+    }
+    for rawDateKey in rawDateKeys {
+      try withStatement(deleteSQL) { statement in
+        if let tool {
+          bindText(statement, index: 1, value: tool.rawValue)
+          bindText(statement, index: 2, value: rawDateKey)
+        } else {
+          bindText(statement, index: 1, value: rawDateKey)
+        }
+        if sqlite3_step(statement) != SQLITE_DONE {
+          throw StoreError.executeFailed(errorMessage)
+        }
+      }
+    }
+  }
+
+  private func deleteDailyRollupsForRefreshWindow(
+    tool: UsageAgent,
+    dateContext: UsageDateContext
+  ) throws {
+    try deleteRollupsInCurrentQueue(
+      table: "daily_rollups",
+      tool: tool,
+      timeZone: dateContext.timeZone,
+      shouldDelete: { $0 >= dateContext.usageWindowStartKey })
+  }
+
+  private func deleteStaleBreakdownRollups(
+    table: String,
+    tool: UsageAgent,
+    dateContext: UsageDateContext,
+    retainedDateKeys: Set<String>
+  ) throws {
+    try deleteRollupsInCurrentQueue(
+      table: table,
+      tool: tool,
+      timeZone: dateContext.timeZone,
+      shouldDelete: { normalizedDateKey in
+        normalizedDateKey >= dateContext.usageWindowStartKey
+          && (normalizedDateKey > dateContext.todayKey
+            || !retainedDateKeys.contains(normalizedDateKey))
+      })
+  }
+
   private func upsertDailyTotal(tool: UsageAgent, dateKey: String, totalCost: Double) throws {
     let sql = """
       INSERT INTO daily_rollups (date_key, tool, total_cost, updated_at)
@@ -1291,20 +1507,16 @@ final class UsageStore: @unchecked Sendable {
   private func upsertModelDailyTotals(
     tool: UsageAgent,
     dateKey: String,
-    totals: [DailyModelBreakdown]
+    totals: [DailyModelBreakdown],
+    timeZone: TimeZone
   ) throws {
-    let normalizedDateKey = DateHelper.normalizedDateKey(from: dateKey) ?? dateKey
-    let deleteSQL = """
-      DELETE FROM model_daily_rollups
-      WHERE date_key = ? AND tool = ?;
-      """
-    try withStatement(deleteSQL) { statement in
-      bindText(statement, index: 1, value: normalizedDateKey)
-      bindText(statement, index: 2, value: tool.rawValue)
-      if sqlite3_step(statement) != SQLITE_DONE {
-        throw StoreError.executeFailed(errorMessage)
-      }
-    }
+    let normalizedDateKey =
+      DateHelper.normalizedDateKey(from: dateKey, in: timeZone) ?? dateKey
+    try deleteRollupsInCurrentQueue(
+      table: "model_daily_rollups",
+      tool: tool,
+      timeZone: timeZone,
+      shouldDelete: { $0 == normalizedDateKey })
     for total in totals {
       try upsertModelDailyTotal(
         tool: tool,
@@ -1343,20 +1555,16 @@ final class UsageStore: @unchecked Sendable {
   private func upsertMachineDailyTotals(
     tool: UsageAgent,
     dateKey: String,
-    totals: [DailyMachineBreakdown]
+    totals: [DailyMachineBreakdown],
+    timeZone: TimeZone
   ) throws {
-    let normalizedDateKey = DateHelper.normalizedDateKey(from: dateKey) ?? dateKey
-    let deleteSQL = """
-      DELETE FROM machine_daily_rollups
-      WHERE date_key = ? AND tool = ?;
-      """
-    try withStatement(deleteSQL) { statement in
-      bindText(statement, index: 1, value: normalizedDateKey)
-      bindText(statement, index: 2, value: tool.rawValue)
-      if sqlite3_step(statement) != SQLITE_DONE {
-        throw StoreError.executeFailed(errorMessage)
-      }
-    }
+    let normalizedDateKey =
+      DateHelper.normalizedDateKey(from: dateKey, in: timeZone) ?? dateKey
+    try deleteRollupsInCurrentQueue(
+      table: "machine_daily_rollups",
+      tool: tool,
+      timeZone: timeZone,
+      shouldDelete: { $0 == normalizedDateKey })
     for total in totals {
       try upsertMachineDailyTotal(
         tool: tool,
@@ -1370,15 +1578,19 @@ final class UsageStore: @unchecked Sendable {
     tool: UsageAgent,
     modelName: String,
     totalCost: Double,
-    recordedAt: Date
+    recordedAt: Date,
+    dateContext: UsageDateContext
   ) throws {
     let sql = """
-      INSERT INTO model_samples (tool, model_name, recorded_at, total_cost, delta_cost, date_key)
-      VALUES (?, ?, ?, ?, ?, ?);
+        INSERT INTO model_samples (tool, model_name, recorded_at, total_cost, delta_cost, date_key)
+        VALUES (?, ?, ?, ?, ?, ?);
       """
-    let dateKey = DateHelper.dateKey(for: recordedAt)
     let previousTotal =
-      try maxModelSampleCost(for: dateKey, tool: tool, modelName: modelName) ?? 0
+      try maxModelSampleCost(
+        tool: tool,
+        modelName: modelName,
+        from: dateContext.startOfToday,
+        to: dateContext.startOfNextDay) ?? 0
     let deltaCost = max(0, totalCost - previousTotal)
     try withStatement(sql) { statement in
       bindText(statement, index: 1, value: tool.rawValue)
@@ -1386,23 +1598,28 @@ final class UsageStore: @unchecked Sendable {
       sqlite3_bind_double(statement, 3, recordedAt.timeIntervalSince1970)
       sqlite3_bind_double(statement, 4, totalCost)
       sqlite3_bind_double(statement, 5, deltaCost)
-      bindText(statement, index: 6, value: dateKey)
+      bindText(statement, index: 6, value: dateContext.todayKey)
       if sqlite3_step(statement) != SQLITE_DONE {
         throw StoreError.executeFailed(errorMessage)
       }
     }
   }
 
-  private func modelSampleNames(for dateKey: String, tool: UsageAgent) throws -> Set<String> {
+  private func modelSampleNames(
+    for tool: UsageAgent,
+    from start: Date,
+    to end: Date
+  ) throws -> Set<String> {
     let sql = """
       SELECT DISTINCT model_name
       FROM model_samples
-      WHERE date_key = ? AND tool = ?;
+      WHERE tool = ? AND recorded_at >= ? AND recorded_at < ?;
       """
     var modelNames = Set<String>()
     try withStatement(sql) { statement in
-      bindText(statement, index: 1, value: dateKey)
-      bindText(statement, index: 2, value: tool.rawValue)
+      bindText(statement, index: 1, value: tool.rawValue)
+      sqlite3_bind_double(statement, 2, start.timeIntervalSince1970)
+      sqlite3_bind_double(statement, 3, end.timeIntervalSince1970)
       while sqlite3_step(statement) == SQLITE_ROW {
         guard let modelNameCString = sqlite3_column_text(statement, 0) else {
           continue
@@ -1417,16 +1634,20 @@ final class UsageStore: @unchecked Sendable {
     tool: UsageAgent,
     machineName: String,
     totalCost: Double,
-    recordedAt: Date
+    recordedAt: Date,
+    dateContext: UsageDateContext
   ) throws {
     let sql = """
-      INSERT INTO machine_samples (
-        tool, machine_name, recorded_at, total_cost, delta_cost, date_key
-      ) VALUES (?, ?, ?, ?, ?, ?);
+        INSERT INTO machine_samples (
+          tool, machine_name, recorded_at, total_cost, delta_cost, date_key
+        ) VALUES (?, ?, ?, ?, ?, ?);
       """
-    let dateKey = DateHelper.dateKey(for: recordedAt)
     let previousTotal =
-      try maxMachineSampleCost(for: dateKey, tool: tool, machineName: machineName) ?? 0
+      try maxMachineSampleCost(
+        tool: tool,
+        machineName: machineName,
+        from: dateContext.startOfToday,
+        to: dateContext.startOfNextDay) ?? 0
     let deltaCost = max(0, totalCost - previousTotal)
     try withStatement(sql) { statement in
       bindText(statement, index: 1, value: tool.rawValue)
@@ -1434,23 +1655,28 @@ final class UsageStore: @unchecked Sendable {
       sqlite3_bind_double(statement, 3, recordedAt.timeIntervalSince1970)
       sqlite3_bind_double(statement, 4, totalCost)
       sqlite3_bind_double(statement, 5, deltaCost)
-      bindText(statement, index: 6, value: dateKey)
+      bindText(statement, index: 6, value: dateContext.todayKey)
       if sqlite3_step(statement) != SQLITE_DONE {
         throw StoreError.executeFailed(errorMessage)
       }
     }
   }
 
-  private func machineSampleNames(for dateKey: String, tool: UsageAgent) throws -> Set<String> {
+  private func machineSampleNames(
+    for tool: UsageAgent,
+    from start: Date,
+    to end: Date
+  ) throws -> Set<String> {
     let sql = """
       SELECT DISTINCT machine_name
       FROM machine_samples
-      WHERE date_key = ? AND tool = ?;
+      WHERE tool = ? AND recorded_at >= ? AND recorded_at < ?;
       """
     var machineNames = Set<String>()
     try withStatement(sql) { statement in
-      bindText(statement, index: 1, value: dateKey)
-      bindText(statement, index: 2, value: tool.rawValue)
+      bindText(statement, index: 1, value: tool.rawValue)
+      sqlite3_bind_double(statement, 2, start.timeIntervalSince1970)
+      sqlite3_bind_double(statement, 3, end.timeIntervalSince1970)
       while sqlite3_step(statement) == SQLITE_ROW {
         guard let machineNameCString = sqlite3_column_text(statement, 0) else {
           continue
@@ -1461,17 +1687,22 @@ final class UsageStore: @unchecked Sendable {
     return machineNames
   }
 
-  private func latestSampleCost(for dateKey: String, tool: UsageAgent) throws -> Double? {
+  private func latestSampleCost(
+    for tool: UsageAgent,
+    from start: Date,
+    to end: Date
+  ) throws -> Double? {
     let sql = """
       SELECT total_cost
       FROM samples
-      WHERE date_key = ? AND tool = ?
+      WHERE tool = ? AND recorded_at >= ? AND recorded_at < ?
       ORDER BY recorded_at DESC
       LIMIT 1;
       """
     return try withStatement(sql) { statement in
-      bindText(statement, index: 1, value: dateKey)
-      bindText(statement, index: 2, value: tool.rawValue)
+      bindText(statement, index: 1, value: tool.rawValue)
+      sqlite3_bind_double(statement, 2, start.timeIntervalSince1970)
+      sqlite3_bind_double(statement, 3, end.timeIntervalSince1970)
       if sqlite3_step(statement) == SQLITE_ROW {
         return sqlite3_column_double(statement, 0)
       }
@@ -1480,19 +1711,21 @@ final class UsageStore: @unchecked Sendable {
   }
 
   private func maxModelSampleCost(
-    for dateKey: String,
     tool: UsageAgent,
-    modelName: String
+    modelName: String,
+    from start: Date,
+    to end: Date
   ) throws -> Double? {
     let sql = """
       SELECT MAX(total_cost)
       FROM model_samples
-      WHERE date_key = ? AND tool = ? AND model_name = ?
+      WHERE tool = ? AND model_name = ? AND recorded_at >= ? AND recorded_at < ?
       """
     return try withStatement(sql) { statement in
-      bindText(statement, index: 1, value: dateKey)
-      bindText(statement, index: 2, value: tool.rawValue)
-      bindText(statement, index: 3, value: modelName)
+      bindText(statement, index: 1, value: tool.rawValue)
+      bindText(statement, index: 2, value: modelName)
+      sqlite3_bind_double(statement, 3, start.timeIntervalSince1970)
+      sqlite3_bind_double(statement, 4, end.timeIntervalSince1970)
       if sqlite3_step(statement) == SQLITE_ROW {
         guard sqlite3_column_type(statement, 0) != SQLITE_NULL else {
           return nil
@@ -1504,19 +1737,21 @@ final class UsageStore: @unchecked Sendable {
   }
 
   private func maxMachineSampleCost(
-    for dateKey: String,
     tool: UsageAgent,
-    machineName: String
+    machineName: String,
+    from start: Date,
+    to end: Date
   ) throws -> Double? {
     let sql = """
       SELECT MAX(total_cost)
       FROM machine_samples
-      WHERE date_key = ? AND tool = ? AND machine_name = ?
+      WHERE tool = ? AND machine_name = ? AND recorded_at >= ? AND recorded_at < ?
       """
     return try withStatement(sql) { statement in
-      bindText(statement, index: 1, value: dateKey)
-      bindText(statement, index: 2, value: tool.rawValue)
-      bindText(statement, index: 3, value: machineName)
+      bindText(statement, index: 1, value: tool.rawValue)
+      bindText(statement, index: 2, value: machineName)
+      sqlite3_bind_double(statement, 3, start.timeIntervalSince1970)
+      sqlite3_bind_double(statement, 4, end.timeIntervalSince1970)
       if sqlite3_step(statement) == SQLITE_ROW {
         guard sqlite3_column_type(statement, 0) != SQLITE_NULL else {
           return nil
