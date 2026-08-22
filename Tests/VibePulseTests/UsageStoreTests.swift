@@ -67,6 +67,54 @@ final class UsageStoreTests: XCTestCase {
       [priorRecordedAt])
   }
 
+  func testCurrentDayInvalidationRemovesOldTimezoneDateKeyCollisions() throws {
+    let store = try UsageStore(path: ":memory:")
+    let newNow = try XCTUnwrap(
+      ISO8601DateFormatter().date(from: "2026-08-22T01:30:00Z"))
+    let oldSampleRecordedAt =
+      newNow
+      .addingTimeInterval(-19 * 60 * 60)
+    let oldTimeZone = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
+    let newTimeZone = try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles"))
+    let oldContext = UsageDateContext(now: oldSampleRecordedAt, timeZone: oldTimeZone)
+    let newContext = UsageDateContext(now: newNow, timeZone: newTimeZone)
+
+    XCTAssertEqual(oldContext.todayKey, newContext.todayKey)
+    XCTAssertLessThan(oldSampleRecordedAt, newContext.startOfToday)
+
+    try store.insertSample(
+      tool: .claude,
+      totalCost: 100,
+      recordedAt: oldSampleRecordedAt,
+      dateContext: oldContext)
+    try store.insertModelSamplesForRefresh(
+      tool: .claude,
+      modelBreakdowns: [DailyModelBreakdown(modelName: "model", cost: 100)],
+      recordedAt: oldSampleRecordedAt,
+      dateContext: oldContext)
+    try store.insertMachineSamplesForRefresh(
+      tool: .claude,
+      machineBreakdowns: [DailyMachineBreakdown(machineName: "machine", cost: 100)],
+      recordedAt: oldSampleRecordedAt,
+      dateContext: oldContext)
+
+    try store.deleteCurrentDaySamples(using: newContext)
+    XCTAssertEqual(try store.backfillSampleDeltas(), 0)
+    XCTAssertEqual(try store.backfillModelSampleDeltas(), 0)
+    XCTAssertEqual(try store.backfillMachineSampleDeltas(), 0)
+
+    XCTAssertTrue(
+      store.fetchSamples(tool: .claude, from: Date.distantPast, to: Date.distantFuture).isEmpty)
+    XCTAssertTrue(
+      store.fetchModelSamples(
+        tools: [.claude], from: Date.distantPast, to: Date.distantFuture
+      ).isEmpty)
+    XCTAssertTrue(
+      store.fetchMachineSamples(
+        tools: [.claude], from: Date.distantPast, to: Date.distantFuture
+      ).isEmpty)
+  }
+
   func testSampleBreakdownDeltasUseRecordedAtIntervalAcrossTimezoneDateKeys() throws {
     let store = try UsageStore(path: ":memory:")
     let first = try XCTUnwrap(
@@ -239,6 +287,81 @@ final class UsageStoreTests: XCTestCase {
       .map(\.machineName),
       ["new-machine"])
     XCTAssertEqual(store.dailyTotal(for: outsideDateKey, tool: .claude), 4)
+  }
+
+  func testRefreshWindowRollupDeletionNormalizesStoredDateKeys() throws {
+    let path = temporaryStorePath()
+    defer { try? FileManager.default.removeItem(atPath: path) }
+    let store = try UsageStore(path: path)
+    let context = UsageDateContext(
+      now: try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-08-22T12:00:00Z")),
+      timeZone: try XCTUnwrap(TimeZone(identifier: "UTC")))
+    let historicalDateKey = "2026-07-02"
+    let staleDateKey = "17 Aug 2026"
+
+    try insertRawDailyRollup(
+      path: path, dateKey: "July 2, 2026", tool: .claude, totalCost: 1)
+    try insertRawDailyRollup(
+      path: path, dateKey: staleDateKey, tool: .claude, totalCost: 2)
+    try insertRawModelDailyRollup(
+      path: path, dateKey: "July 2, 2026", tool: .claude,
+      modelName: "historical-model", totalCost: 1)
+    try insertRawModelDailyRollup(
+      path: path, dateKey: staleDateKey, tool: .claude,
+      modelName: "stale-model", totalCost: 2)
+    try insertRawMachineDailyRollup(
+      path: path, dateKey: "July 2, 2026", tool: .claude,
+      machineName: "historical-machine", totalCost: 1)
+    try insertRawMachineDailyRollup(
+      path: path, dateKey: staleDateKey, tool: .claude,
+      machineName: "stale-machine", totalCost: 2)
+
+    try store.deleteRefreshWindowRollups(using: context)
+
+    XCTAssertEqual(
+      store.fetchDailyRollups(
+        since: historicalDateKey, through: historicalDateKey, timeZone: context.timeZone
+      )
+      .map(\.totalCost),
+      [1])
+    XCTAssertTrue(
+      store.fetchDailyRollups(
+        since: context.usageWindowStartKey,
+        through: context.todayKey,
+        timeZone: context.timeZone
+      ).isEmpty)
+    XCTAssertEqual(
+      store.fetchModelDailyRollups(
+        since: historicalDateKey,
+        through: historicalDateKey,
+        tools: [.claude],
+        timeZone: context.timeZone
+      )
+      .map(\.totalCost),
+      [1])
+    XCTAssertTrue(
+      store.fetchModelDailyRollups(
+        since: context.usageWindowStartKey,
+        through: context.todayKey,
+        tools: [.claude],
+        timeZone: context.timeZone
+      ).isEmpty)
+    XCTAssertEqual(
+      store.fetchMachineDailyRollups(
+        since: historicalDateKey,
+        through: historicalDateKey,
+        tools: [.claude],
+        timeZone: context.timeZone
+      )
+      .map(\.totalCost),
+      [1])
+    XCTAssertTrue(
+      store.fetchMachineDailyRollups(
+        since: context.usageWindowStartKey,
+        through: context.todayKey,
+        tools: [.claude],
+        timeZone: context.timeZone
+      ).isEmpty)
   }
 
   func testStoreRoundTripsArbitraryAgentIdentifiers() throws {
@@ -819,6 +942,37 @@ final class UsageStoreTests: XCTestCase {
     sqlite3_bind_double(statement, 5, Date().timeIntervalSince1970)
     guard sqlite3_step(statement) == SQLITE_DONE else {
       throw NSError(domain: "UsageStoreTests", code: 3)
+    }
+  }
+
+  private func insertRawDailyRollup(
+    path: String,
+    dateKey: String,
+    tool: UsageAgent,
+    totalCost: Double
+  ) throws {
+    var db: OpaquePointer?
+    guard sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK else {
+      throw NSError(domain: "UsageStoreTests", code: 28)
+    }
+    defer { sqlite3_close(db) }
+
+    let sql = """
+      INSERT INTO daily_rollups (date_key, tool, total_cost, updated_at)
+      VALUES (?, ?, ?, ?);
+      """
+    var statement: OpaquePointer?
+    guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+      throw NSError(domain: "UsageStoreTests", code: 29)
+    }
+    defer { sqlite3_finalize(statement) }
+
+    sqlite3_bind_text(statement, 1, (dateKey as NSString).utf8String, -1, nil)
+    sqlite3_bind_text(statement, 2, (tool.rawValue as NSString).utf8String, -1, nil)
+    sqlite3_bind_double(statement, 3, totalCost)
+    sqlite3_bind_double(statement, 4, Date().timeIntervalSince1970)
+    guard sqlite3_step(statement) == SQLITE_DONE else {
+      throw NSError(domain: "UsageStoreTests", code: 30)
     }
   }
 

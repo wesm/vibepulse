@@ -26,16 +26,6 @@ final class DateHelperTests: XCTestCase {
 
   func testDateKeyTracksSystemTimezoneChangesAfterFormatterInitialization() throws {
     let originalTimeZone = getenv("TZ").map { String(cString: $0) }
-    let instant = try XCTUnwrap(
-      ISO8601DateFormatter().date(from: "2026-08-22T01:30:00Z"))
-    let targetIdentifier =
-      TimeZone.current.identifier == "America/Los_Angeles"
-      ? "Asia/Tokyo"
-      : "America/Los_Angeles"
-    let targetTimeZone = try XCTUnwrap(TimeZone(identifier: targetIdentifier))
-    let capturedContext = UsageDateContext(now: instant)
-    let capturedIdentifier = capturedContext.timeZone.identifier
-
     defer {
       if let originalTimeZone {
         setenv("TZ", originalTimeZone, 1)
@@ -46,12 +36,23 @@ final class DateHelperTests: XCTestCase {
       NSTimeZone.resetSystemTimeZone()
     }
 
+    let instant = try XCTUnwrap(
+      ISO8601DateFormatter().date(from: "2026-08-22T01:30:00Z"))
     let beforeChange = DateHelper.dateKey(for: instant)
+    let targetIdentifier = try XCTUnwrap(
+      ["America/Los_Angeles", "Asia/Tokyo", "UTC", "America/New_York"].first { identifier in
+        guard let timeZone = TimeZone(identifier: identifier) else { return false }
+        return DateHelper.dateKey(for: instant, in: timeZone) != beforeChange
+      })
+    let targetTimeZone = try XCTUnwrap(TimeZone(identifier: targetIdentifier))
+    let capturedContext = UsageDateContext(now: instant)
+    let capturedIdentifier = capturedContext.timeZone.identifier
+
     setenv("TZ", targetIdentifier, 1)
     tzset()
     NSTimeZone.resetSystemTimeZone()
 
-    let expectedKey = targetIdentifier == "America/Los_Angeles" ? "2026-08-21" : "2026-08-22"
+    let expectedKey = DateHelper.dateKey(for: instant, in: targetTimeZone)
     XCTAssertEqual(DateHelper.dateKey(for: instant), expectedKey)
     XCTAssertEqual(
       DateHelper.dateKey(for: instant, in: targetTimeZone),

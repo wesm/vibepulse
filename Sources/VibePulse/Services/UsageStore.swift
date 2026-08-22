@@ -397,11 +397,12 @@ final class UsageStore: @unchecked Sendable {
         for table in ["samples", "model_samples", "machine_samples"] {
           let sql = """
             DELETE FROM \(table)
-            WHERE recorded_at >= ? AND recorded_at < ?;
+            WHERE (recorded_at >= ? AND recorded_at < ?) OR date_key = ?;
             """
           try withStatement(sql) { statement in
             sqlite3_bind_double(statement, 1, context.startOfToday.timeIntervalSince1970)
             sqlite3_bind_double(statement, 2, context.startOfNextDay.timeIntervalSince1970)
+            bindText(statement, index: 3, value: context.todayKey)
             if sqlite3_step(statement) != SQLITE_DONE {
               throw StoreError.executeFailed(errorMessage)
             }
@@ -420,16 +421,11 @@ final class UsageStore: @unchecked Sendable {
       do {
         try execute("BEGIN IMMEDIATE TRANSACTION;")
         for table in ["daily_rollups", "model_daily_rollups", "machine_daily_rollups"] {
-          let sql = """
-            DELETE FROM \(table)
-            WHERE date_key >= ?;
-            """
-          try withStatement(sql) { statement in
-            bindText(statement, index: 1, value: context.usageWindowStartKey)
-            if sqlite3_step(statement) != SQLITE_DONE {
-              throw StoreError.executeFailed(errorMessage)
-            }
-          }
+          try deleteRollupsInCurrentQueue(
+            table: table,
+            tool: nil,
+            dateContext: context,
+            shouldDelete: { $0 >= context.usageWindowStartKey })
         }
         try execute("COMMIT;")
       } catch {
@@ -1369,21 +1365,69 @@ final class UsageStore: @unchecked Sendable {
     }
   }
 
+  private func deleteRollupsInCurrentQueue(
+    table: String,
+    tool: UsageAgent?,
+    dateContext: UsageDateContext,
+    shouldDelete: (String) -> Bool
+  ) throws {
+    let selectSQL: String
+    if tool == nil {
+      selectSQL = "SELECT date_key FROM \(table);"
+    } else {
+      selectSQL = "SELECT date_key FROM \(table) WHERE tool = ?;"
+    }
+
+    var rawDateKeys = Set<String>()
+    try withStatement(selectSQL) { statement in
+      if let tool {
+        bindText(statement, index: 1, value: tool.rawValue)
+      }
+      while sqlite3_step(statement) == SQLITE_ROW {
+        guard let dateKeyCString = sqlite3_column_text(statement, 0) else { continue }
+        let rawDateKey = String(cString: dateKeyCString)
+        guard
+          let normalizedDateKey = DateHelper.normalizedDateKey(
+            from: rawDateKey,
+            in: dateContext.timeZone),
+          shouldDelete(normalizedDateKey)
+        else {
+          continue
+        }
+        rawDateKeys.insert(rawDateKey)
+      }
+    }
+
+    let deleteSQL: String
+    if tool == nil {
+      deleteSQL = "DELETE FROM \(table) WHERE date_key = ?;"
+    } else {
+      deleteSQL = "DELETE FROM \(table) WHERE tool = ? AND date_key = ?;"
+    }
+    for rawDateKey in rawDateKeys {
+      try withStatement(deleteSQL) { statement in
+        if let tool {
+          bindText(statement, index: 1, value: tool.rawValue)
+          bindText(statement, index: 2, value: rawDateKey)
+        } else {
+          bindText(statement, index: 1, value: rawDateKey)
+        }
+        if sqlite3_step(statement) != SQLITE_DONE {
+          throw StoreError.executeFailed(errorMessage)
+        }
+      }
+    }
+  }
+
   private func deleteDailyRollupsForRefreshWindow(
     tool: UsageAgent,
     dateContext: UsageDateContext
   ) throws {
-    let sql = """
-      DELETE FROM daily_rollups
-      WHERE tool = ? AND date_key >= ?;
-      """
-    try withStatement(sql) { statement in
-      bindText(statement, index: 1, value: tool.rawValue)
-      bindText(statement, index: 2, value: dateContext.usageWindowStartKey)
-      if sqlite3_step(statement) != SQLITE_DONE {
-        throw StoreError.executeFailed(errorMessage)
-      }
-    }
+    try deleteRollupsInCurrentQueue(
+      table: "daily_rollups",
+      tool: tool,
+      dateContext: dateContext,
+      shouldDelete: { $0 >= dateContext.usageWindowStartKey })
   }
 
   private func deleteStaleBreakdownRollups(
@@ -1392,36 +1436,15 @@ final class UsageStore: @unchecked Sendable {
     dateContext: UsageDateContext,
     retainedDateKeys: Set<String>
   ) throws {
-    let sortedRetainedDateKeys = retainedDateKeys.sorted()
-    let sql: String
-    if sortedRetainedDateKeys.isEmpty {
-      sql = """
-        DELETE FROM \(table)
-        WHERE tool = ? AND date_key >= ?;
-        """
-    } else {
-      let placeholders = Array(repeating: "?", count: sortedRetainedDateKeys.count)
-        .joined(separator: ", ")
-      sql = """
-        DELETE FROM \(table)
-        WHERE tool = ? AND date_key >= ?
-          AND (date_key > ? OR date_key NOT IN (\(placeholders)));
-        """
-    }
-
-    try withStatement(sql) { statement in
-      bindText(statement, index: 1, value: tool.rawValue)
-      bindText(statement, index: 2, value: dateContext.usageWindowStartKey)
-      if !sortedRetainedDateKeys.isEmpty {
-        bindText(statement, index: 3, value: dateContext.todayKey)
-        for (offset, dateKey) in sortedRetainedDateKeys.enumerated() {
-          bindText(statement, index: Int32(offset + 4), value: dateKey)
-        }
-      }
-      if sqlite3_step(statement) != SQLITE_DONE {
-        throw StoreError.executeFailed(errorMessage)
-      }
-    }
+    try deleteRollupsInCurrentQueue(
+      table: table,
+      tool: tool,
+      dateContext: dateContext,
+      shouldDelete: { normalizedDateKey in
+        normalizedDateKey >= dateContext.usageWindowStartKey
+          && (normalizedDateKey > dateContext.todayKey
+            || !retainedDateKeys.contains(normalizedDateKey))
+      })
   }
 
   private func upsertDailyTotal(tool: UsageAgent, dateKey: String, totalCost: Double) throws {
