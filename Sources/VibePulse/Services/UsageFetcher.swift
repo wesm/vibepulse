@@ -355,36 +355,44 @@ final class UsageFetcher: UsageFetching, @unchecked Sendable {
     if let text = String(data: data, encoding: .utf8),
       text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     {
-      return []
+      throw FetchError.invalidOutput
     }
     let json = try JSONSerialization.jsonObject(
       with: data, options: []
     )
-    let dailyRows: [[String: Any]]
+    let dailyRows: [Any]
 
     if let dict = json as? [String: Any] {
-      dailyRows = dict["daily"] as? [[String: Any]] ?? []
-    } else if let array = json as? [[String: Any]] {
+      guard let rows = dict["daily"] as? [Any] else {
+        throw FetchError.invalidOutput
+      }
+      dailyRows = rows
+    } else if let array = json as? [Any] {
       dailyRows = array
     } else {
       throw FetchError.invalidOutput
     }
 
-    return dailyRows.compactMap { row in
-      guard let dateKey = row["date"] as? String else {
-        return nil
-      }
-      guard let cost = parseNumber(row["totalCost"]) else {
-        return nil
+    var totals: [DailyTotal] = []
+    for rawRow in dailyRows {
+      guard
+        let row = rawRow as? [String: Any],
+        let dateKey = row["date"] as? String,
+        !dateKey.isEmpty,
+        let cost = parseNumber(row["totalCost"])
+      else {
+        throw FetchError.invalidOutput
       }
       let modelBreakdowns = parseModelBreakdowns(row["modelBreakdowns"])
       let machineBreakdowns = parseMachineBreakdowns(row["machineBreakdowns"])
-      return DailyTotal(
-        dateKey: dateKey,
-        cost: cost,
-        modelBreakdowns: modelBreakdowns,
-        machineBreakdowns: machineBreakdowns)
+      totals.append(
+        DailyTotal(
+          dateKey: dateKey,
+          cost: cost,
+          modelBreakdowns: modelBreakdowns,
+          machineBreakdowns: machineBreakdowns))
     }
+    return totals
   }
 
   private static func parseModelBreakdowns(_ value: Any?) -> [DailyModelBreakdown]? {

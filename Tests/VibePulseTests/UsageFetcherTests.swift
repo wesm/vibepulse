@@ -295,7 +295,7 @@ final class UsageFetcherTests: XCTestCase {
     XCTAssertEqual(totals[2].machineBreakdowns?.count, 0)
   }
 
-  func testParseDailyTotalsRejectsNonFiniteCosts() throws {
+  func testParseDailyTotalsRejectsResponseWithMalformedRow() throws {
     let json = """
       {
         "daily": [
@@ -320,11 +320,31 @@ final class UsageFetcherTests: XCTestCase {
       """
     let data = try XCTUnwrap(json.data(using: .utf8))
 
-    let totals = try UsageFetcher.parseDailyTotals(data: data)
+    XCTAssertThrowsError(
+      try UsageFetcher.parseDailyTotals(data: data)
+    ) { error in
+      guard case UsageFetcher.FetchError.invalidOutput = error else {
+        return XCTFail("Expected invalid output, got \(error)")
+      }
+    }
+  }
 
-    XCTAssertEqual(totals.count, 1)
-    XCTAssertEqual(totals[0].dateKey, "2026-07-04")
-    XCTAssertEqual(totals[0].cost, 4.5, accuracy: 0.001)
+  func testParseDailyTotalsRejectsMissingDailyArray() throws {
+    let data = try XCTUnwrap(#"{"schema_version":4}"#.data(using: .utf8))
+
+    XCTAssertThrowsError(
+      try UsageFetcher.parseDailyTotals(data: data)
+    ) { error in
+      guard case UsageFetcher.FetchError.invalidOutput = error else {
+        return XCTFail("Expected invalid output, got \(error)")
+      }
+    }
+  }
+
+  func testParseDailyTotalsAcceptsEmptyDailyArray() throws {
+    let data = try XCTUnwrap(#"{"daily":[]}"#.data(using: .utf8))
+
+    XCTAssertTrue(try UsageFetcher.parseDailyTotals(data: data).isEmpty)
   }
 
   func testParseDiscoveredAgentsSumsThirtyDayBreakdownsAndDropsZeroCostAgents() throws {

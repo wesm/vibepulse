@@ -205,6 +205,7 @@ final class AppModel: ObservableObject {
   }
 
   private func handleSystemTimeZoneChange() {
+    clearPublishedUsage()
     timezoneRefreshState.markTimezoneChange()
     refreshNow()
   }
