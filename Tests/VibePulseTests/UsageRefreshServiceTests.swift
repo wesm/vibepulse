@@ -25,6 +25,66 @@ final class UsageRefreshServiceTests: XCTestCase {
     XCTAssertEqual(result.importErrors, [])
   }
 
+  func testRefreshReplacesMissingRollupsForSuccessfulAgent() throws {
+    let agent = UsageAgent("future-agent")
+    let context = testContext()
+    let staleDate = context.calendar.date(byAdding: .day, value: -1, to: context.startOfToday)!
+    let staleDateKey = DateHelper.dateKey(for: staleDate, in: context.timeZone)
+    let fetcher = StubUsageFetcher(
+      discoveredAgents: [agent],
+      totalsByAgent: [
+        agent: [
+          DailyTotal(
+            dateKey: context.todayKey,
+            cost: 7,
+            modelBreakdowns: [DailyModelBreakdown(modelName: "new-model", cost: 7)],
+            machineBreakdowns: [DailyMachineBreakdown(machineName: "new-machine", cost: 7)])
+        ]
+      ])
+    let store = try UsageStore(path: ":memory:")
+    try store.upsertDailyTotals(
+      tool: agent,
+      totals: [
+        DailyTotal(
+          dateKey: staleDateKey,
+          cost: 3,
+          modelBreakdowns: [DailyModelBreakdown(modelName: "old-model", cost: 3)],
+          machineBreakdowns: [DailyMachineBreakdown(machineName: "old-machine", cost: 3)])
+      ],
+      dateContext: context)
+    let service = UsageRefreshService(fetcher: fetcher, store: store)
+
+    let result = try service.refresh(context: context)
+
+    XCTAssertEqual(result.importErrors, [])
+    XCTAssertEqual(
+      store.fetchDailyRollups(
+        since: context.usageWindowStartKey,
+        through: context.todayKey,
+        timeZone: context.timeZone
+      )
+      .map(\.dateKey),
+      [context.todayKey])
+    XCTAssertEqual(
+      store.fetchModelDailyRollups(
+        since: context.usageWindowStartKey,
+        through: context.todayKey,
+        tools: [agent],
+        timeZone: context.timeZone
+      )
+      .map(\.modelName),
+      ["new-model"])
+    XCTAssertEqual(
+      store.fetchMachineDailyRollups(
+        since: context.usageWindowStartKey,
+        through: context.todayKey,
+        tools: [agent],
+        timeZone: context.timeZone
+      )
+      .map(\.machineName),
+      ["new-machine"])
+  }
+
   func testRefreshContinuesAfterOneAgentImportFails() throws {
     let failed = UsageAgent("failed-agent")
     let successful = UsageAgent("successful-agent")

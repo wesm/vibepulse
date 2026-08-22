@@ -5,6 +5,7 @@ struct UsageDateContext: Sendable {
   let timeZone: TimeZone
   let calendar: Calendar
   let todayKey: String
+  let usageWindowStartKey: String
   let startOfToday: Date
   let startOfNextDay: Date
 
@@ -16,16 +17,19 @@ struct UsageDateContext: Sendable {
     guard
       let startOfNextDay = calendar.date(
         byAdding: .day,
-        value: 1,
-        to: startOfToday)
+        value: 1, to: startOfToday),
+      let usageWindowStart = calendar.date(
+        byAdding: .day,
+        value: -29, to: startOfToday)
     else {
-      preconditionFailure("Unable to calculate the next local day")
+      preconditionFailure("Unable to calculate usage date bounds")
     }
 
     self.now = now
     self.timeZone = capturedTimeZone
     self.calendar = calendar
     self.todayKey = DateHelper.dateKey(for: now, in: capturedTimeZone)
+    self.usageWindowStartKey = DateHelper.dateKey(for: usageWindowStart, in: capturedTimeZone)
     self.startOfToday = startOfToday
     self.startOfNextDay = startOfNextDay
   }

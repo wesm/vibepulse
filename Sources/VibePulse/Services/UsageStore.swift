@@ -51,44 +51,40 @@ final class UsageStore: @unchecked Sendable {
     try queue.sync {
       do {
         try execute("BEGIN IMMEDIATE TRANSACTION;")
-        let sql = """
-          INSERT INTO daily_rollups (date_key, tool, total_cost, updated_at)
-          VALUES (?, ?, ?, ?)
-          ON CONFLICT(date_key, tool) DO UPDATE SET
-          total_cost = excluded.total_cost,
-          updated_at = excluded.updated_at;
-          """
-        let updatedAt = Date().timeIntervalSince1970
-        for total in totals {
-          let dateKey =
-            DateHelper.normalizedDateKey(from: total.dateKey, in: context.timeZone)
-            ?? total.dateKey
-          try withStatement(sql) { statement in
-            bindText(statement, index: 1, value: dateKey)
-            bindText(statement, index: 2, value: tool.rawValue)
-            sqlite3_bind_double(statement, 3, total.cost)
-            sqlite3_bind_double(statement, 4, updatedAt)
-            if sqlite3_step(statement) != SQLITE_DONE {
-              throw StoreError.executeFailed(errorMessage)
-            }
-          }
+        try upsertDailyTotalsInCurrentQueue(tool: tool, totals: totals, dateContext: context)
+        try execute("COMMIT;")
+      } catch {
+        try? execute("ROLLBACK;")
+        throw error
+      }
+    }
+  }
 
-          if let modelBreakdowns = total.modelBreakdowns {
-            try upsertModelDailyTotals(
-              tool: tool,
-              dateKey: dateKey,
-              totals: modelBreakdowns,
-              timeZone: context.timeZone)
-          }
-          if let machineBreakdowns = total.machineBreakdowns {
-            try upsertMachineDailyTotals(
-              tool: tool,
-              dateKey: dateKey,
-              totals: machineBreakdowns,
-              timeZone: context.timeZone)
-          }
-        }
+  func replaceDailyTotals(
+    tool: UsageAgent,
+    totals: [DailyTotal],
+    dateContext: UsageDateContext
+  ) throws {
+    let returnedDateKeys = Set(
+      totals.map {
+        DateHelper.normalizedDateKey(from: $0.dateKey, in: dateContext.timeZone) ?? $0.dateKey
+      })
 
+    try queue.sync {
+      do {
+        try execute("BEGIN IMMEDIATE TRANSACTION;")
+        try deleteDailyRollupsForRefreshWindow(tool: tool, dateContext: dateContext)
+        try deleteStaleBreakdownRollups(
+          table: "model_daily_rollups",
+          tool: tool,
+          dateContext: dateContext,
+          retainedDateKeys: returnedDateKeys)
+        try deleteStaleBreakdownRollups(
+          table: "machine_daily_rollups",
+          tool: tool,
+          dateContext: dateContext,
+          retainedDateKeys: returnedDateKeys)
+        try upsertDailyTotalsInCurrentQueue(tool: tool, totals: totals, dateContext: dateContext)
         try execute("COMMIT;")
       } catch {
         try? execute("ROLLBACK;")
@@ -1318,6 +1314,89 @@ final class UsageStore: @unchecked Sendable {
         return sqlite3_column_double(statement, 0)
       }
       return nil
+    }
+  }
+
+  private func upsertDailyTotalsInCurrentQueue(
+    tool: UsageAgent,
+    totals: [DailyTotal],
+    dateContext: UsageDateContext
+  ) throws {
+    for total in totals {
+      let dateKey =
+        DateHelper.normalizedDateKey(from: total.dateKey, in: dateContext.timeZone)
+        ?? total.dateKey
+      try upsertDailyTotal(tool: tool, dateKey: dateKey, totalCost: total.cost)
+
+      if let modelBreakdowns = total.modelBreakdowns {
+        try upsertModelDailyTotals(
+          tool: tool,
+          dateKey: dateKey,
+          totals: modelBreakdowns,
+          timeZone: dateContext.timeZone)
+      }
+      if let machineBreakdowns = total.machineBreakdowns {
+        try upsertMachineDailyTotals(
+          tool: tool,
+          dateKey: dateKey,
+          totals: machineBreakdowns,
+          timeZone: dateContext.timeZone)
+      }
+    }
+  }
+
+  private func deleteDailyRollupsForRefreshWindow(
+    tool: UsageAgent,
+    dateContext: UsageDateContext
+  ) throws {
+    let sql = """
+      DELETE FROM daily_rollups
+      WHERE tool = ? AND date_key >= ?;
+      """
+    try withStatement(sql) { statement in
+      bindText(statement, index: 1, value: tool.rawValue)
+      bindText(statement, index: 2, value: dateContext.usageWindowStartKey)
+      if sqlite3_step(statement) != SQLITE_DONE {
+        throw StoreError.executeFailed(errorMessage)
+      }
+    }
+  }
+
+  private func deleteStaleBreakdownRollups(
+    table: String,
+    tool: UsageAgent,
+    dateContext: UsageDateContext,
+    retainedDateKeys: Set<String>
+  ) throws {
+    let sortedRetainedDateKeys = retainedDateKeys.sorted()
+    let sql: String
+    if sortedRetainedDateKeys.isEmpty {
+      sql = """
+        DELETE FROM \(table)
+        WHERE tool = ? AND date_key >= ?;
+        """
+    } else {
+      let placeholders = Array(repeating: "?", count: sortedRetainedDateKeys.count)
+        .joined(separator: ", ")
+      sql = """
+        DELETE FROM \(table)
+        WHERE tool = ? AND date_key >= ?
+          AND (date_key > ? OR date_key NOT IN (\(placeholders)));
+        """
+    }
+
+    try withStatement(sql) { statement in
+      bindText(statement, index: 1, value: tool.rawValue)
+      bindText(statement, index: 2, value: dateContext.usageWindowStartKey)
+      if !sortedRetainedDateKeys.isEmpty {
+        bindText(statement, index: 3, value: dateContext.todayKey)
+        for (offset, dateKey) in sortedRetainedDateKeys.enumerated() {
+          bindText(statement, index: Int32(offset + 4), value: dateKey)
+        }
+      }
+      if sqlite3_step(statement) != SQLITE_DONE {
+        throw StoreError.executeFailed(errorMessage)
+      }
     }
   }
 

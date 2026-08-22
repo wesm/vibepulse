@@ -28,7 +28,7 @@ final class UsageRefreshService: @unchecked Sendable {
     for agent in agents {
       do {
         let totals = try fetcher.fetchDailyTotals(for: agent, using: context)
-        try store.upsertDailyTotals(
+        try store.replaceDailyTotals(
           tool: agent,
           totals: totals,
           dateContext: context)

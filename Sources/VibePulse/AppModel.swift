@@ -64,12 +64,15 @@ final class AppModel: ObservableObject {
   private let welcomeWindowController = WelcomeWindowController()
   private var timer: DispatchSourceTimer?
   private var timeZoneObserver: NSObjectProtocol?
-  private var pendingTimezoneInvalidation = false
+  private var timezoneRefreshState: UsageRefreshTimezoneState
   private var isUpdatingLoginItem = false
   private let store: UsageStore
   private let refreshService: UsageRefreshService
 
   init() {
+    timezoneRefreshState = UsageRefreshTimezoneState(
+      lastSuccessfulTimeZone: defaults.string(forKey: DefaultsKey.lastUsageTimeZone),
+      lastInvalidatedTimeZone: defaults.string(forKey: DefaultsKey.lastUsageInvalidatedTimeZone))
     let agentPreferences = AgentPreferences(defaults: defaults)
     agentPreferences.migrateLegacyPreferences()
     self.agentPreferences = agentPreferences
@@ -139,10 +142,8 @@ final class AppModel: ObservableObject {
     statusMessage = nil
 
     let context = UsageDateContext()
-    let storedTimeZone = defaults.string(forKey: DefaultsKey.lastUsageTimeZone)
-    let invalidateCurrentDay =
-      pendingTimezoneInvalidation
-      || (storedTimeZone != nil && storedTimeZone != context.timeZone.identifier)
+    let invalidateCurrentDay = timezoneRefreshState.shouldInvalidateCurrentDay(
+      for: context.timeZone.identifier)
 
     DispatchQueue.global(qos: .background).async { [refreshService] in
       do {
@@ -153,7 +154,7 @@ final class AppModel: ObservableObject {
 
         DispatchQueue.main.async {
           guard UsageDateContext().timeZone.identifier == context.timeZone.identifier else {
-            self.pendingTimezoneInvalidation = true
+            self.timezoneRefreshState.markTimezoneChange()
             self.isRefreshing = false
             self.refreshNow()
             return
@@ -164,13 +165,14 @@ final class AppModel: ObservableObject {
           if result.importErrors.isEmpty {
             self.statusMessage = nil
             self.lastUpdated = refreshTime
-            self.defaults.set(
-              context.timeZone.identifier,
-              forKey: DefaultsKey.lastUsageTimeZone)
-            self.pendingTimezoneInvalidation = false
           } else {
             self.statusMessage = result.importErrors.joined(separator: " | ")
           }
+          self.timezoneRefreshState.completeRefresh(
+            for: context.timeZone.identifier,
+            invalidatedCurrentDay: invalidateCurrentDay,
+            hasImportErrors: !result.importErrors.isEmpty)
+          self.persistTimezoneRefreshState()
           self.reloadFromStore(context: UsageDateContext())
           self.isRefreshing = false
         }
@@ -179,7 +181,7 @@ final class AppModel: ObservableObject {
           let contextStillCurrent =
             UsageDateContext().timeZone.identifier == context.timeZone.identifier
           if !contextStillCurrent {
-            self.pendingTimezoneInvalidation = true
+            self.timezoneRefreshState.markTimezoneChange()
           }
           self.statusMessage = error.localizedDescription
           if contextStillCurrent {
@@ -195,8 +197,19 @@ final class AppModel: ObservableObject {
   }
 
   private func handleSystemTimeZoneChange() {
-    pendingTimezoneInvalidation = true
+    timezoneRefreshState.markTimezoneChange()
     refreshNow()
+  }
+
+  private func persistTimezoneRefreshState() {
+    if let lastSuccessfulTimeZone = timezoneRefreshState.lastSuccessfulTimeZone {
+      defaults.set(lastSuccessfulTimeZone, forKey: DefaultsKey.lastUsageTimeZone)
+    }
+    if let lastInvalidatedTimeZone = timezoneRefreshState.lastInvalidatedTimeZone {
+      defaults.set(
+        lastInvalidatedTimeZone,
+        forKey: DefaultsKey.lastUsageInvalidatedTimeZone)
+    }
   }
 
   private func showWelcomeIfNeeded() {
@@ -274,9 +287,7 @@ final class AppModel: ObservableObject {
     let machineSamples = store.fetchMachineSamples(tools: tools, from: startOfDay, to: now)
     machineCumulativeSeries = UsageSeriesAggregation.cumulativeMachineSeries(from: machineSamples)
 
-    let sinceDate =
-      context.calendar.date(byAdding: .day, value: -29, to: startOfDay) ?? startOfDay
-    let sinceKey = DateHelper.dateKey(for: sinceDate, in: context.timeZone)
+    let sinceKey = context.usageWindowStartKey
     let rollups = store.fetchDailyRollups(
       since: sinceKey,
       through: context.todayKey,
@@ -483,5 +494,6 @@ final class AppModel: ObservableObject {
     static let maintenanceMode = "maintenanceMode"
     static let lastMaintenanceAt = "lastMaintenanceAt"
     static let lastUsageTimeZone = "lastUsageTimeZone"
+    static let lastUsageInvalidatedTimeZone = "lastUsageInvalidatedTimeZone"
   }
 }

@@ -163,6 +163,84 @@ final class UsageStoreTests: XCTestCase {
       ["2026-07-02"])
   }
 
+  func testReplaceDailyTotalsRemovesMissingRollupsWithinRefreshWindow() throws {
+    let store = try UsageStore(path: ":memory:")
+    let context = UsageDateContext(
+      now: try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-08-22T12:00:00Z")),
+      timeZone: try XCTUnwrap(TimeZone(identifier: "UTC")))
+    let staleDate = context.calendar.date(byAdding: .day, value: -1, to: context.startOfToday)!
+    let outsideDate = context.calendar.date(byAdding: .day, value: -30, to: context.startOfToday)!
+    let futureDate = context.calendar.date(byAdding: .day, value: 1, to: context.startOfToday)!
+    let staleDateKey = DateHelper.dateKey(for: staleDate, in: context.timeZone)
+    let outsideDateKey = DateHelper.dateKey(for: outsideDate, in: context.timeZone)
+    let futureDateKey = DateHelper.dateKey(for: futureDate, in: context.timeZone)
+
+    try store.upsertDailyTotals(
+      tool: .claude,
+      totals: [
+        DailyTotal(
+          dateKey: staleDateKey,
+          cost: 2,
+          modelBreakdowns: [DailyModelBreakdown(modelName: "old-model", cost: 2)],
+          machineBreakdowns: [DailyMachineBreakdown(machineName: "old-machine", cost: 2)]),
+        DailyTotal(
+          dateKey: context.todayKey,
+          cost: 3,
+          modelBreakdowns: [DailyModelBreakdown(modelName: "old-model", cost: 3)],
+          machineBreakdowns: [DailyMachineBreakdown(machineName: "old-machine", cost: 3)]),
+        DailyTotal(
+          dateKey: outsideDateKey,
+          cost: 4,
+          modelBreakdowns: [DailyModelBreakdown(modelName: "old-model", cost: 4)],
+          machineBreakdowns: [DailyMachineBreakdown(machineName: "old-machine", cost: 4)]),
+        DailyTotal(
+          dateKey: futureDateKey,
+          cost: 5,
+          modelBreakdowns: [DailyModelBreakdown(modelName: "old-model", cost: 5)],
+          machineBreakdowns: [DailyMachineBreakdown(machineName: "old-machine", cost: 5)]),
+      ],
+      dateContext: context)
+
+    try store.replaceDailyTotals(
+      tool: .claude,
+      totals: [
+        DailyTotal(
+          dateKey: context.todayKey,
+          cost: 7,
+          modelBreakdowns: [DailyModelBreakdown(modelName: "new-model", cost: 7)],
+          machineBreakdowns: [DailyMachineBreakdown(machineName: "new-machine", cost: 7)])
+      ],
+      dateContext: context)
+
+    XCTAssertEqual(
+      store.fetchDailyRollups(
+        since: context.usageWindowStartKey,
+        through: futureDateKey,
+        timeZone: context.timeZone
+      )
+      .map(\.dateKey),
+      [context.todayKey])
+    XCTAssertEqual(
+      store.fetchModelDailyRollups(
+        since: context.usageWindowStartKey,
+        through: futureDateKey,
+        tools: [.claude],
+        timeZone: context.timeZone
+      )
+      .map(\.modelName),
+      ["new-model"])
+    XCTAssertEqual(
+      store.fetchMachineDailyRollups(
+        since: context.usageWindowStartKey,
+        through: futureDateKey,
+        tools: [.claude],
+        timeZone: context.timeZone
+      )
+      .map(\.machineName),
+      ["new-machine"])
+    XCTAssertEqual(store.dailyTotal(for: outsideDateKey, tool: .claude), 4)
+  }
+
   func testStoreRoundTripsArbitraryAgentIdentifiers() throws {
     let store = try UsageStore(path: ":memory:")
     let agent = UsageAgent("future-agent")
