@@ -165,15 +165,19 @@ final class UsageFetcher: UsageFetching, @unchecked Sendable {
 
   private static func isUnsupportedTimezoneError(_ output: String) -> Bool {
     let message = output.lowercased()
-    guard message.contains("--timezone") else { return false }
-    return [
+    let rejectionMarkers = [
       "unknown flag",
       "unknown option",
       "unrecognized argument",
       "unrecognized option",
       "unexpected argument",
       "flag provided but not defined",
-    ].contains { message.contains($0) }
+    ]
+    return message.split(whereSeparator: { $0.isNewline }).contains { line in
+      let line = String(line)
+      return line.contains("--timezone")
+        && rejectionMarkers.contains { line.contains($0) }
+    }
   }
 
   private func runCommand(_ arguments: [String]) throws -> Data {

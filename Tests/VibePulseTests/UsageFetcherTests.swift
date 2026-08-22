@@ -52,7 +52,8 @@ final class UsageFetcherTests: XCTestCase {
     let fetcher = UsageFetcher(commandRunner: { arguments in
       commands.append(arguments)
       if arguments.contains("--breakdown") {
-        throw UsageFetcher.FetchError.commandFailed("Error: unknown flag: --breakdown")
+        throw UsageFetcher.FetchError.commandFailed(
+          "Error: unknown flag: --breakdown\nUsage: agentsview usage daily [--timezone <zone>]")
       }
       return data
     })

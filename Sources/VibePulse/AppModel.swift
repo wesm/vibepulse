@@ -119,7 +119,12 @@ final class AppModel: ObservableObject {
       }
     }
 
-    reloadFromStore()
+    let initialContext = UsageDateContext()
+    if !timezoneRefreshState.shouldInvalidateCurrentDay(
+      for: initialContext.timeZone.identifier)
+    {
+      reloadFromStore(context: initialContext)
+    }
     scheduleTimer()
     refreshNow()
     runMaintenanceIfNeeded()
@@ -144,6 +149,9 @@ final class AppModel: ObservableObject {
     let context = UsageDateContext()
     let invalidateCurrentDay = timezoneRefreshState.shouldInvalidateCurrentDay(
       for: context.timeZone.identifier)
+    if invalidateCurrentDay {
+      clearPublishedUsage()
+    }
 
     DispatchQueue.global(qos: .background).async { [refreshService] in
       do {
@@ -210,6 +218,21 @@ final class AppModel: ObservableObject {
         lastInvalidatedTimeZone,
         forKey: DefaultsKey.lastUsageInvalidatedTimeZone)
     }
+  }
+
+  private func clearPublishedUsage() {
+    menuTotalText = Formatters.currencyString(0)
+    hourlySeries = []
+    cumulativeSeries = []
+    dailySeries = []
+    toolTotals = []
+    modelCumulativeSeries = []
+    modelDailySeries = []
+    modelTotals = []
+    machineCumulativeSeries = []
+    machineDailySeries = []
+    machineTotals = []
+    lastUpdated = nil
   }
 
   private func showWelcomeIfNeeded() {
