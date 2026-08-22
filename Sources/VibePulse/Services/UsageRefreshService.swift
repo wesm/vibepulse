@@ -20,6 +20,7 @@ final class UsageRefreshService: @unchecked Sendable {
   ) throws -> UsageRefreshResult {
     if invalidateCurrentDay {
       try store.deleteCurrentDaySamples(using: context)
+      try store.deleteRefreshWindowRollups(using: context)
     }
 
     let agents = try fetcher.discoverAgents(using: context).sorted()

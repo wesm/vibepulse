@@ -17,8 +17,8 @@ struct UsageRefreshTimezoneState: Equatable, Sendable {
 
   func shouldInvalidateCurrentDay(for timeZoneIdentifier: String) -> Bool {
     let lastProcessedTimeZone = lastInvalidatedTimeZone ?? lastSuccessfulTimeZone
-    return pendingInvalidation
-      || (lastProcessedTimeZone != nil && lastProcessedTimeZone != timeZoneIdentifier)
+    guard let lastProcessedTimeZone else { return true }
+    return pendingInvalidation || lastProcessedTimeZone != timeZoneIdentifier
   }
 
   mutating func markTimezoneChange() {

@@ -415,6 +415,30 @@ final class UsageStore: @unchecked Sendable {
     }
   }
 
+  func deleteRefreshWindowRollups(using context: UsageDateContext) throws {
+    try queue.sync {
+      do {
+        try execute("BEGIN IMMEDIATE TRANSACTION;")
+        for table in ["daily_rollups", "model_daily_rollups", "machine_daily_rollups"] {
+          let sql = """
+            DELETE FROM \(table)
+            WHERE date_key >= ?;
+            """
+          try withStatement(sql) { statement in
+            bindText(statement, index: 1, value: context.usageWindowStartKey)
+            if sqlite3_step(statement) != SQLITE_DONE {
+              throw StoreError.executeFailed(errorMessage)
+            }
+          }
+        }
+        try execute("COMMIT;")
+      } catch {
+        try? execute("ROLLBACK;")
+        throw error
+      }
+    }
+  }
+
   func insertModelSample(
     tool: UsageAgent,
     modelName: String,

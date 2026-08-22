@@ -3,6 +3,20 @@ import XCTest
 @testable import VibePulse
 
 final class UsageRefreshTimezoneStateTests: XCTestCase {
+  func testMissingTimezoneMarkerRequiresOneTimeInvalidation() throws {
+    let timeZone = try XCTUnwrap(TimeZone(identifier: "UTC"))
+    var state = UsageRefreshTimezoneState()
+
+    XCTAssertTrue(state.shouldInvalidateCurrentDay(for: timeZone.identifier))
+
+    state.completeRefresh(
+      for: timeZone.identifier,
+      invalidatedCurrentDay: true,
+      hasImportErrors: false)
+
+    XCTAssertFalse(state.shouldInvalidateCurrentDay(for: timeZone.identifier))
+  }
+
   func testPartialRefreshCompletesInvalidationWithoutAdvancingSuccessfulImportMarker() throws {
     let oldTimeZone = try XCTUnwrap(TimeZone(identifier: "UTC"))
     let newTimeZone = try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles"))
