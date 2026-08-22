@@ -50,7 +50,15 @@ final class UsageFetcher: UsageFetching, @unchecked Sendable {
         data = try executeAgentsviewCommand(
           tool.dailyCommand(in: context.timeZone).filter { $0 != "--breakdown" })
       }
-      return try Self.parseDailyTotals(data: data)
+      let totals = try Self.parseDailyTotals(data: data)
+      guard
+        totals.allSatisfy({
+          DateHelper.normalizedDateKey(from: $0.dateKey, in: context.timeZone) != nil
+        })
+      else {
+        throw FetchError.invalidOutput
+      }
+      return totals
     }
   }
 

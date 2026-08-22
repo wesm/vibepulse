@@ -391,18 +391,30 @@ final class UsageStore: @unchecked Sendable {
   }
 
   func deleteCurrentDaySamples(using context: UsageDateContext) throws {
+    try deleteCurrentDaySamples(tool: nil, context: context)
+  }
+
+  func deleteCurrentDaySamples(for tool: UsageAgent, using context: UsageDateContext) throws {
+    try deleteCurrentDaySamples(tool: tool, context: context)
+  }
+
+  private func deleteCurrentDaySamples(tool: UsageAgent?, context: UsageDateContext) throws {
     try queue.sync {
       do {
         try execute("BEGIN IMMEDIATE TRANSACTION;")
+        let toolClause = tool == nil ? "" : " AND tool = ?"
         for table in ["samples", "model_samples", "machine_samples"] {
           let sql = """
             DELETE FROM \(table)
-            WHERE (recorded_at >= ? AND recorded_at < ?) OR date_key = ?;
+            WHERE ((recorded_at >= ? AND recorded_at < ?) OR date_key = ?)\(toolClause);
             """
           try withStatement(sql) { statement in
             sqlite3_bind_double(statement, 1, context.startOfToday.timeIntervalSince1970)
             sqlite3_bind_double(statement, 2, context.startOfNextDay.timeIntervalSince1970)
             bindText(statement, index: 3, value: context.todayKey)
+            if let tool {
+              bindText(statement, index: 4, value: tool.rawValue)
+            }
             if sqlite3_step(statement) != SQLITE_DONE {
               throw StoreError.executeFailed(errorMessage)
             }

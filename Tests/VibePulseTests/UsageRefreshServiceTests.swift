@@ -85,6 +85,47 @@ final class UsageRefreshServiceTests: XCTestCase {
       ["new-machine"])
   }
 
+  func testRefreshClearsCurrentDaySnapshotsWhenTodayIsAbsent() throws {
+    let agent = UsageAgent("future-agent")
+    let context = testContext()
+    let fetcher = StubUsageFetcher(
+      discoveredAgents: [agent],
+      totalsByAgent: [
+        agent: [DailyTotal(dateKey: "2026-07-16", cost: 2)]
+      ])
+    let store = try UsageStore(path: ":memory:")
+    try store.insertSample(
+      tool: agent,
+      totalCost: 10,
+      recordedAt: context.now,
+      dateContext: context)
+    try store.insertModelSamplesForRefresh(
+      tool: agent,
+      modelBreakdowns: [DailyModelBreakdown(modelName: "model", cost: 10)],
+      recordedAt: context.now,
+      dateContext: context)
+    try store.insertMachineSamplesForRefresh(
+      tool: agent,
+      machineBreakdowns: [DailyMachineBreakdown(machineName: "machine", cost: 10)],
+      recordedAt: context.now,
+      dateContext: context)
+    let service = UsageRefreshService(fetcher: fetcher, store: store)
+
+    let result = try service.refresh(context: context)
+
+    XCTAssertEqual(result.importErrors, [])
+    XCTAssertTrue(
+      store.fetchSamples(tool: agent, from: context.startOfToday, to: context.now).isEmpty)
+    XCTAssertTrue(
+      store.fetchModelSamples(
+        tools: [agent], from: context.startOfToday, to: context.now
+      ).isEmpty)
+    XCTAssertTrue(
+      store.fetchMachineSamples(
+        tools: [agent], from: context.startOfToday, to: context.now
+      ).isEmpty)
+  }
+
   func testRefreshContinuesAfterOneAgentImportFails() throws {
     let failed = UsageAgent("failed-agent")
     let successful = UsageAgent("successful-agent")

@@ -56,6 +56,8 @@ final class UsageRefreshService: @unchecked Sendable {
               recordedAt: context.now,
               dateContext: context)
           }
+        } else {
+          try store.deleteCurrentDaySamples(for: agent, using: context)
         }
       } catch {
         errors.append("\(agent.displayName): \(error.localizedDescription)")

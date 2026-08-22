@@ -75,6 +75,23 @@ final class UsageFetcherTests: XCTestCase {
       ])
   }
 
+  func testFetchDailyTotalsRejectsInvalidCalendarDate() throws {
+    let json = #"{"daily":[{"date":"2026-02-30","totalCost":4.5}]}"#
+    let data = try XCTUnwrap(json.data(using: .utf8))
+    let fetcher = UsageFetcher(commandRunner: { _ in data })
+    let context = UsageDateContext(
+      now: Date(timeIntervalSince1970: 1_750_000_000),
+      timeZone: TimeZone(identifier: "America/New_York")!)
+
+    XCTAssertThrowsError(
+      try fetcher.fetchDailyTotals(for: .claude, using: context)
+    ) { error in
+      guard case UsageFetcher.FetchError.invalidOutput = error else {
+        return XCTFail("Expected invalid output, got \(error)")
+      }
+    }
+  }
+
   func testUnsupportedTimezoneFlagFailsWithoutRetryingAnUnscopedCommand() {
     var commands: [[String]] = []
     let fetcher = UsageFetcher(commandRunner: { arguments in
