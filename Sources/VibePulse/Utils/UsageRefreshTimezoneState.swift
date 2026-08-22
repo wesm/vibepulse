@@ -21,6 +21,10 @@ struct UsageRefreshTimezoneState: Equatable, Sendable {
     return pendingInvalidation || lastProcessedTimeZone != timeZoneIdentifier
   }
 
+  func shouldDeferStoreReload(for timeZoneIdentifier: String) -> Bool {
+    shouldInvalidateCurrentDay(for: timeZoneIdentifier)
+  }
+
   mutating func markTimezoneChange() {
     pendingInvalidation = true
   }

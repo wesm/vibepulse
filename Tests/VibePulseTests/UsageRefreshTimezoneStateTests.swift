@@ -17,6 +17,17 @@ final class UsageRefreshTimezoneStateTests: XCTestCase {
     XCTAssertFalse(state.shouldInvalidateCurrentDay(for: timeZone.identifier))
   }
 
+  func testPendingTimezoneInvalidationDefersStoreReload() throws {
+    let timeZone = try XCTUnwrap(TimeZone(identifier: "UTC"))
+    var state = UsageRefreshTimezoneState(
+      lastSuccessfulTimeZone: timeZone.identifier,
+      lastInvalidatedTimeZone: timeZone.identifier)
+
+    state.markTimezoneChange()
+
+    XCTAssertTrue(state.shouldDeferStoreReload(for: timeZone.identifier))
+  }
+
   func testPartialRefreshCompletesInvalidationWithoutAdvancingSuccessfulImportMarker() throws {
     let oldTimeZone = try XCTUnwrap(TimeZone(identifier: "UTC"))
     let newTimeZone = try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles"))

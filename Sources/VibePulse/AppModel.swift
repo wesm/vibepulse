@@ -193,7 +193,7 @@ final class AppModel: ObservableObject {
           }
           self.statusMessage = error.localizedDescription
           if contextStillCurrent {
-            self.reloadFromStore(context: UsageDateContext())
+            self.reloadFromStoreIfTimezoneReady()
           }
           self.isRefreshing = false
           if !contextStillCurrent {
@@ -263,7 +263,7 @@ final class AppModel: ObservableObject {
       disabledAgentIDs.insert(agent.rawValue)
     }
     agentPreferences.saveDisabledAgentIDs(disabledAgentIDs)
-    reloadFromStore()
+    reloadFromStoreIfTimezoneReady()
   }
 
   private var activeTools: [UsageAgent] {
@@ -361,6 +361,14 @@ final class AppModel: ObservableObject {
     menuTotalText = Formatters.currencyString(combined)
   }
 
+  private func reloadFromStoreIfTimezoneReady() {
+    let context = UsageDateContext()
+    guard !timezoneRefreshState.shouldDeferStoreReload(for: context.timeZone.identifier) else {
+      return
+    }
+    reloadFromStore(context: context)
+  }
+
   private func aggregateModelDailySeries(
     _ rollups: [ModelDailyRollup],
     timeZone: TimeZone
@@ -433,7 +441,7 @@ final class AppModel: ObservableObject {
           self.maintenanceMessage = message
           self.lastMaintenanceAt = now
           self.defaults.set(now.timeIntervalSince1970, forKey: DefaultsKey.lastMaintenanceAt)
-          self.reloadFromStore()
+          self.reloadFromStoreIfTimezoneReady()
           self.isMaintaining = false
         }
       } catch {
