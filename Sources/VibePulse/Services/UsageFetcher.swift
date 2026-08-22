@@ -391,8 +391,8 @@ final class UsageFetcher: UsageFetching, @unchecked Sendable {
       else {
         throw FetchError.invalidOutput
       }
-      let modelBreakdowns = parseModelBreakdowns(row["modelBreakdowns"])
-      let machineBreakdowns = parseMachineBreakdowns(row["machineBreakdowns"])
+      let modelBreakdowns = try parseModelBreakdowns(row["modelBreakdowns"])
+      let machineBreakdowns = try parseMachineBreakdowns(row["machineBreakdowns"])
       totals.append(
         DailyTotal(
           dateKey: dateKey,
@@ -403,32 +403,36 @@ final class UsageFetcher: UsageFetching, @unchecked Sendable {
     return totals
   }
 
-  private static func parseModelBreakdowns(_ value: Any?) -> [DailyModelBreakdown]? {
+  private static func parseModelBreakdowns(_ value: Any?) throws -> [DailyModelBreakdown]? {
     guard let value else { return nil }
-    guard let rows = value as? [[String: Any]] else { return nil }
+    guard let rows = value as? [Any] else { throw FetchError.invalidOutput }
     var modelBreakdowns: [DailyModelBreakdown] = []
-    for row in rows {
-      guard let modelName = row["modelName"] as? String, !modelName.isEmpty else {
-        return nil
-      }
-      guard let cost = parseNumber(row["cost"]) else {
-        return nil
+    for rawRow in rows {
+      guard
+        let row = rawRow as? [String: Any],
+        let modelName = row["modelName"] as? String,
+        !modelName.isEmpty,
+        let cost = parseNumber(row["cost"])
+      else {
+        throw FetchError.invalidOutput
       }
       modelBreakdowns.append(DailyModelBreakdown(modelName: modelName, cost: cost))
     }
     return modelBreakdowns
   }
 
-  private static func parseMachineBreakdowns(_ value: Any?) -> [DailyMachineBreakdown]? {
+  private static func parseMachineBreakdowns(_ value: Any?) throws -> [DailyMachineBreakdown]? {
     guard let value else { return nil }
-    guard let rows = value as? [[String: Any]] else { return nil }
+    guard let rows = value as? [Any] else { throw FetchError.invalidOutput }
     var breakdowns: [DailyMachineBreakdown] = []
-    for row in rows {
-      guard let machineName = row["machineName"] as? String, !machineName.isEmpty else {
-        return nil
-      }
-      guard let cost = parseNumber(row["cost"]) else {
-        return nil
+    for rawRow in rows {
+      guard
+        let row = rawRow as? [String: Any],
+        let machineName = row["machineName"] as? String,
+        !machineName.isEmpty,
+        let cost = parseNumber(row["cost"])
+      else {
+        throw FetchError.invalidOutput
       }
       breakdowns.append(DailyMachineBreakdown(machineName: machineName, cost: cost))
     }

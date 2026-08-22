@@ -213,7 +213,7 @@ final class UsageFetcherTests: XCTestCase {
     XCTAssertEqual(totals[1].modelBreakdowns?.count, 0)
   }
 
-  func testParseDailyTotalsTreatsPartiallyMalformedModelBreakdownsAsUnavailable() throws {
+  func testParseDailyTotalsRejectsPartiallyMalformedModelBreakdowns() throws {
     let json = """
       {
         "daily": [
@@ -230,9 +230,13 @@ final class UsageFetcherTests: XCTestCase {
       """
     let data = try XCTUnwrap(json.data(using: .utf8))
 
-    let totals = try UsageFetcher.parseDailyTotals(data: data)
-
-    XCTAssertNil(totals[0].modelBreakdowns)
+    XCTAssertThrowsError(
+      try UsageFetcher.parseDailyTotals(data: data)
+    ) { error in
+      guard case UsageFetcher.FetchError.invalidOutput = error else {
+        return XCTFail("Expected invalid output, got \(error)")
+      }
+    }
   }
 
   func testParseDailyTotalsIncludesValidMachineBreakdowns() throws {
@@ -276,9 +280,13 @@ final class UsageFetcherTests: XCTestCase {
       """
     let data = try XCTUnwrap(json.data(using: .utf8))
 
-    let totals = try UsageFetcher.parseDailyTotals(data: data)
-
-    XCTAssertNil(totals[0].machineBreakdowns)
+    XCTAssertThrowsError(
+      try UsageFetcher.parseDailyTotals(data: data)
+    ) { error in
+      guard case UsageFetcher.FetchError.invalidOutput = error else {
+        return XCTFail("Expected invalid output, got \(error)")
+      }
+    }
   }
 
   func testParseDailyTotalsDistinguishesUnavailableMachineBreakdownsFromExplicitEmpty() throws {
@@ -291,11 +299,6 @@ final class UsageFetcherTests: XCTestCase {
           },
           {
             "date": "2026-07-17",
-            "totalCost": 7.25,
-            "machineBreakdowns": "malformed"
-          },
-          {
-            "date": "2026-07-18",
             "totalCost": 4,
             "machineBreakdowns": []
           }
@@ -307,9 +310,22 @@ final class UsageFetcherTests: XCTestCase {
     let totals = try UsageFetcher.parseDailyTotals(data: data)
 
     XCTAssertNil(totals[0].machineBreakdowns)
-    XCTAssertNil(totals[1].machineBreakdowns)
-    XCTAssertNotNil(totals[2].machineBreakdowns)
-    XCTAssertEqual(totals[2].machineBreakdowns?.count, 0)
+    XCTAssertNotNil(totals[1].machineBreakdowns)
+    XCTAssertEqual(totals[1].machineBreakdowns?.count, 0)
+  }
+
+  func testParseDailyTotalsRejectsMalformedMachineBreakdownField() throws {
+    let json =
+      #"{"daily":[{"date":"2026-07-17","totalCost":7.25,"machineBreakdowns":"malformed"}]}"#
+    let data = try XCTUnwrap(json.data(using: .utf8))
+
+    XCTAssertThrowsError(
+      try UsageFetcher.parseDailyTotals(data: data)
+    ) { error in
+      guard case UsageFetcher.FetchError.invalidOutput = error else {
+        return XCTFail("Expected invalid output, got \(error)")
+      }
+    }
   }
 
   func testParseDailyTotalsRejectsResponseWithMalformedRow() throws {

@@ -436,7 +436,7 @@ final class UsageStore: @unchecked Sendable {
           try deleteRollupsInCurrentQueue(
             table: table,
             tool: nil,
-            dateContext: context,
+            timeZone: context.timeZone,
             shouldDelete: { $0 >= context.usageWindowStartKey })
         }
         try execute("COMMIT;")
@@ -1380,7 +1380,7 @@ final class UsageStore: @unchecked Sendable {
   private func deleteRollupsInCurrentQueue(
     table: String,
     tool: UsageAgent?,
-    dateContext: UsageDateContext,
+    timeZone: TimeZone,
     shouldDelete: (String) -> Bool
   ) throws {
     let selectSQL: String
@@ -1400,8 +1400,7 @@ final class UsageStore: @unchecked Sendable {
         let rawDateKey = String(cString: dateKeyCString)
         guard
           let normalizedDateKey = DateHelper.normalizedDateKey(
-            from: rawDateKey,
-            in: dateContext.timeZone),
+            from: rawDateKey, in: timeZone),
           shouldDelete(normalizedDateKey)
         else {
           continue
@@ -1438,7 +1437,7 @@ final class UsageStore: @unchecked Sendable {
     try deleteRollupsInCurrentQueue(
       table: "daily_rollups",
       tool: tool,
-      dateContext: dateContext,
+      timeZone: dateContext.timeZone,
       shouldDelete: { $0 >= dateContext.usageWindowStartKey })
   }
 
@@ -1451,7 +1450,7 @@ final class UsageStore: @unchecked Sendable {
     try deleteRollupsInCurrentQueue(
       table: table,
       tool: tool,
-      dateContext: dateContext,
+      timeZone: dateContext.timeZone,
       shouldDelete: { normalizedDateKey in
         normalizedDateKey >= dateContext.usageWindowStartKey
           && (normalizedDateKey > dateContext.todayKey
@@ -1513,17 +1512,11 @@ final class UsageStore: @unchecked Sendable {
   ) throws {
     let normalizedDateKey =
       DateHelper.normalizedDateKey(from: dateKey, in: timeZone) ?? dateKey
-    let deleteSQL = """
-      DELETE FROM model_daily_rollups
-      WHERE date_key = ? AND tool = ?;
-      """
-    try withStatement(deleteSQL) { statement in
-      bindText(statement, index: 1, value: normalizedDateKey)
-      bindText(statement, index: 2, value: tool.rawValue)
-      if sqlite3_step(statement) != SQLITE_DONE {
-        throw StoreError.executeFailed(errorMessage)
-      }
-    }
+    try deleteRollupsInCurrentQueue(
+      table: "model_daily_rollups",
+      tool: tool,
+      timeZone: timeZone,
+      shouldDelete: { $0 == normalizedDateKey })
     for total in totals {
       try upsertModelDailyTotal(
         tool: tool,
@@ -1567,17 +1560,11 @@ final class UsageStore: @unchecked Sendable {
   ) throws {
     let normalizedDateKey =
       DateHelper.normalizedDateKey(from: dateKey, in: timeZone) ?? dateKey
-    let deleteSQL = """
-      DELETE FROM machine_daily_rollups
-      WHERE date_key = ? AND tool = ?;
-      """
-    try withStatement(deleteSQL) { statement in
-      bindText(statement, index: 1, value: normalizedDateKey)
-      bindText(statement, index: 2, value: tool.rawValue)
-      if sqlite3_step(statement) != SQLITE_DONE {
-        throw StoreError.executeFailed(errorMessage)
-      }
-    }
+    try deleteRollupsInCurrentQueue(
+      table: "machine_daily_rollups",
+      tool: tool,
+      timeZone: timeZone,
+      shouldDelete: { $0 == normalizedDateKey })
     for total in totals {
       try upsertMachineDailyTotal(
         tool: tool,

@@ -364,6 +364,56 @@ final class UsageStoreTests: XCTestCase {
       ).isEmpty)
   }
 
+  func testReplaceDailyTotalsRemovesNoncanonicalBreakdownKeysForReturnedDates() throws {
+    let path = temporaryStorePath()
+    defer { try? FileManager.default.removeItem(atPath: path) }
+    let store = try UsageStore(path: path)
+    let context = UsageDateContext(
+      now: try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-08-22T12:00:00Z")),
+      timeZone: try XCTUnwrap(TimeZone(identifier: "UTC")))
+
+    try insertRawModelDailyRollup(
+      path: path,
+      dateKey: "August 22, 2026",
+      tool: .claude,
+      modelName: "shared-model",
+      totalCost: 4)
+    try insertRawMachineDailyRollup(
+      path: path,
+      dateKey: "August 22, 2026",
+      tool: .claude,
+      machineName: "shared-machine",
+      totalCost: 4)
+
+    try store.replaceDailyTotals(
+      tool: .claude,
+      totals: [
+        DailyTotal(
+          dateKey: context.todayKey,
+          cost: 7,
+          modelBreakdowns: [DailyModelBreakdown(modelName: "shared-model", cost: 7)],
+          machineBreakdowns: [DailyMachineBreakdown(machineName: "shared-machine", cost: 7)])
+      ],
+      dateContext: context)
+
+    XCTAssertEqual(
+      store.fetchModelDailyRollups(
+        since: context.todayKey,
+        through: context.todayKey,
+        tools: [.claude],
+        timeZone: context.timeZone
+      ).map(\.totalCost),
+      [7])
+    XCTAssertEqual(
+      store.fetchMachineDailyRollups(
+        since: context.todayKey,
+        through: context.todayKey,
+        tools: [.claude],
+        timeZone: context.timeZone
+      ).map(\.totalCost),
+      [7])
+  }
+
   func testStoreRoundTripsArbitraryAgentIdentifiers() throws {
     let store = try UsageStore(path: ":memory:")
     let agent = UsageAgent("future-agent")
