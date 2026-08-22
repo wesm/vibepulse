@@ -5,22 +5,25 @@ import XCTest
 final class UsageAgentTests: XCTestCase {
   func testArbitraryAgentPreservesExactIdentifierInDailyCommand() {
     let agent = UsageAgent("future-agent_v2")
+    let timeZone = TimeZone(identifier: "America/New_York")!
 
     XCTAssertEqual(agent.rawValue, "future-agent_v2")
     XCTAssertEqual(
-      agent.dailyCommand,
+      agent.dailyCommand(in: timeZone),
       [
         "agentsview", "usage", "daily", "--format", "json", "--breakdown", "--agent",
-        "future-agent_v2", "--since", "30d", "--no-sync",
+        "future-agent_v2", "--since", "30d", "--timezone", "America/New_York", "--no-sync",
       ])
   }
 
   func testDiscoveryCommandRequestsAgentBreakdownsForThirtyDays() {
+    let timeZone = TimeZone(identifier: "America/New_York")!
+
     XCTAssertEqual(
-      UsageAgent.discoveryCommand,
+      UsageAgent.discoveryCommand(in: timeZone),
       [
         "agentsview", "usage", "daily", "--format", "json", "--breakdown", "--since",
-        "30d",
+        "30d", "--timezone", "America/New_York",
       ])
   }
 

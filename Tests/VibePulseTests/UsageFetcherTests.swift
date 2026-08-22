@@ -25,6 +25,7 @@ final class UsageFetcherTests: XCTestCase {
       let queryItems = try XCTUnwrap(components?.queryItems)
       XCTAssertEqual(queryItems.first { $0.name == "from" }?.value, "2026-07-11")
       XCTAssertEqual(queryItems.first { $0.name == "no_default_range" }?.value, "true")
+      XCTAssertEqual(queryItems.first { $0.name == "timezone" }?.value, "America/New_York")
     }
     XCTAssertNil(
       URLComponents(url: discoveryURL, resolvingAgainstBaseURL: false)?.queryItems?
@@ -55,8 +56,11 @@ final class UsageFetcherTests: XCTestCase {
       }
       return data
     })
+    let context = UsageDateContext(
+      now: Date(timeIntervalSince1970: 1_750_000_000),
+      timeZone: TimeZone(identifier: "America/New_York")!)
 
-    let totals = try fetcher.fetchDailyTotals(for: .claude)
+    let totals = try fetcher.fetchDailyTotals(for: .claude, using: context)
 
     XCTAssertEqual(totals.map(\.cost), [4.5])
     XCTAssertEqual(commands.count, 2)
@@ -66,8 +70,30 @@ final class UsageFetcherTests: XCTestCase {
       commands[1],
       [
         "agentsview", "usage", "daily", "--format", "json", "--agent", "claude", "--since",
-        "30d", "--no-sync",
+        "30d", "--timezone", "America/New_York", "--no-sync",
       ])
+  }
+
+  func testUnsupportedTimezoneFlagFailsWithoutRetryingAnUnscopedCommand() {
+    var commands: [[String]] = []
+    let fetcher = UsageFetcher(commandRunner: { arguments in
+      commands.append(arguments)
+      throw UsageFetcher.FetchError.commandFailed(
+        "Error: unknown flag: --timezone")
+    })
+    let context = UsageDateContext(
+      now: Date(timeIntervalSince1970: 1_750_000_000),
+      timeZone: TimeZone(identifier: "America/New_York")!)
+
+    XCTAssertThrowsError(
+      try fetcher.fetchDailyTotals(for: .claude, using: context)
+    ) { error in
+      guard case UsageFetcher.FetchError.unsupportedTimezone = error else {
+        return XCTFail("Expected an unsupported timezone error, got \(error)")
+      }
+    }
+    XCTAssertEqual(commands.count, 1)
+    XCTAssertTrue(commands[0].contains("--timezone"))
   }
 
   func testParseDailyTotalsIncludesModelBreakdowns() throws {

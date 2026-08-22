@@ -1,8 +1,11 @@
 import Foundation
 
 protocol UsageFetching: Sendable {
-  func discoverAgents() throws -> [UsageAgent]
-  func fetchDailyTotals(for tool: UsageAgent) throws -> [DailyTotal]
+  func discoverAgents(using context: UsageDateContext) throws -> [UsageAgent]
+  func fetchDailyTotals(
+    for tool: UsageAgent,
+    using context: UsageDateContext
+  ) throws -> [DailyTotal]
 }
 
 final class UsageFetcher: UsageFetching, @unchecked Sendable {
@@ -11,6 +14,7 @@ final class UsageFetcher: UsageFetching, @unchecked Sendable {
     case invalidOutput
     case agentsviewNotFound(String?)
     case invalidServerURL(String)
+    case unsupportedTimezone
   }
 
   private let commandRunner: (([String]) throws -> Data)?
@@ -19,44 +23,54 @@ final class UsageFetcher: UsageFetching, @unchecked Sendable {
     self.commandRunner = commandRunner
   }
 
-  func discoverAgents() throws -> [UsageAgent] {
+  func discoverAgents(using context: UsageDateContext) throws -> [UsageAgent] {
     try withRetry {
       let data = try fetchUsageData(
-        command: UsageAgent.discoveryCommand,
-        agent: nil)
+        command: UsageAgent.discoveryCommand(in: context.timeZone),
+        agent: nil,
+        context: context)
       return try Self.parseDiscoveredAgents(data: data)
     }
   }
 
-  func fetchDailyTotals(for tool: UsageAgent) throws -> [DailyTotal] {
+  func fetchDailyTotals(
+    for tool: UsageAgent,
+    using context: UsageDateContext
+  ) throws -> [DailyTotal] {
     try withRetry {
       let data: Data
       do {
         data = try fetchUsageData(
-          command: tool.dailyCommand,
-          agent: tool.rawValue)
+          command: tool.dailyCommand(in: context.timeZone),
+          agent: tool.rawValue,
+          context: context)
       } catch FetchError.commandFailed(let output)
         where Self.isUnsupportedBreakdownError(output)
       {
-        data = try executeCommand(tool.dailyCommand.filter { $0 != "--breakdown" })
+        data = try executeAgentsviewCommand(
+          tool.dailyCommand(in: context.timeZone).filter { $0 != "--breakdown" })
       }
       return try Self.parseDailyTotals(data: data)
     }
   }
 
-  private func fetchUsageData(command: [String], agent: String?) throws -> Data {
+  private func fetchUsageData(
+    command: [String],
+    agent: String?,
+    context: UsageDateContext
+  ) throws -> Data {
     let configuredURL =
       UserDefaults.standard.string(forKey: "agentsviewServerURL")?
       .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     guard !configuredURL.isEmpty else {
-      return try executeCommand(command)
+      return try executeAgentsviewCommand(command)
     }
 
     let url = try Self.makeServerURL(
       configuredURL: configuredURL,
       agent: agent,
-      now: Date(),
-      timeZone: TimeZone.current)
+      now: context.now,
+      timeZone: context.timeZone)
     return try Data(contentsOf: url)
   }
 
@@ -106,6 +120,8 @@ final class UsageFetcher: UsageFetching, @unchecked Sendable {
         return try operation()
       } catch FetchError.agentsviewNotFound(let path) {
         throw FetchError.agentsviewNotFound(path)
+      } catch FetchError.unsupportedTimezone {
+        throw FetchError.unsupportedTimezone
       } catch {
         if attempt == maxAttempts {
           throw error
@@ -124,9 +140,32 @@ final class UsageFetcher: UsageFetching, @unchecked Sendable {
     return try runCommand(arguments)
   }
 
+  private func executeAgentsviewCommand(_ arguments: [String]) throws -> Data {
+    do {
+      return try executeCommand(arguments)
+    } catch FetchError.commandFailed(let output)
+      where Self.isUnsupportedTimezoneError(output)
+    {
+      throw FetchError.unsupportedTimezone
+    }
+  }
+
   private static func isUnsupportedBreakdownError(_ output: String) -> Bool {
     let message = output.lowercased()
     guard message.contains("--breakdown") else { return false }
+    return [
+      "unknown flag",
+      "unknown option",
+      "unrecognized argument",
+      "unrecognized option",
+      "unexpected argument",
+      "flag provided but not defined",
+    ].contains { message.contains($0) }
+  }
+
+  private static func isUnsupportedTimezoneError(_ output: String) -> Bool {
+    let message = output.lowercased()
+    guard message.contains("--timezone") else { return false }
     return [
       "unknown flag",
       "unknown option",
@@ -418,6 +457,10 @@ extension UsageFetcher.FetchError: LocalizedError {
         + "or set the path in Settings."
     case .invalidServerURL(let url):
       return "Invalid agentsview server URL: \(url)"
+    case .unsupportedTimezone:
+      return
+        "A current agentsview release with --timezone support is required. "
+        + "Update agentsview and try again."
     }
   }
 }

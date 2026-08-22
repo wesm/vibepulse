@@ -4,6 +4,165 @@ import XCTest
 @testable import VibePulse
 
 final class UsageStoreTests: XCTestCase {
+  func testCurrentDayInvalidationUsesRecordedAtInsteadOfDateKey() throws {
+    let store = try UsageStore(path: ":memory:")
+    let recordedAt = try XCTUnwrap(
+      ISO8601DateFormatter().date(from: "2026-08-22T01:30:00Z"))
+    let oldTimeZone = try XCTUnwrap(TimeZone(identifier: "UTC"))
+    let newTimeZone = try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles"))
+    let oldContext = UsageDateContext(now: recordedAt, timeZone: oldTimeZone)
+    let newContext = UsageDateContext(now: recordedAt, timeZone: newTimeZone)
+    let priorRecordedAt = newContext.startOfToday.addingTimeInterval(-1)
+    let priorContext = UsageDateContext(now: priorRecordedAt, timeZone: newTimeZone)
+
+    try store.insertSample(
+      tool: .claude,
+      totalCost: 100,
+      recordedAt: recordedAt,
+      dateContext: oldContext)
+    try store.insertModelSamplesForRefresh(
+      tool: .claude,
+      modelBreakdowns: [DailyModelBreakdown(modelName: "model", cost: 100)],
+      recordedAt: recordedAt,
+      dateContext: oldContext)
+    try store.insertMachineSamplesForRefresh(
+      tool: .claude,
+      machineBreakdowns: [DailyMachineBreakdown(machineName: "machine", cost: 100)],
+      recordedAt: recordedAt,
+      dateContext: oldContext)
+
+    try store.insertSample(
+      tool: .claude,
+      totalCost: 5,
+      recordedAt: priorRecordedAt,
+      dateContext: priorContext)
+    try store.insertModelSamplesForRefresh(
+      tool: .claude,
+      modelBreakdowns: [DailyModelBreakdown(modelName: "model", cost: 5)],
+      recordedAt: priorRecordedAt,
+      dateContext: priorContext)
+    try store.insertMachineSamplesForRefresh(
+      tool: .claude,
+      machineBreakdowns: [DailyMachineBreakdown(machineName: "machine", cost: 5)],
+      recordedAt: priorRecordedAt,
+      dateContext: priorContext)
+
+    try store.deleteCurrentDaySamples(using: newContext)
+
+    XCTAssertEqual(
+      store.fetchSamples(tool: .claude, from: Date.distantPast, to: Date.distantFuture)
+        .map(\.recordedAt),
+      [priorRecordedAt])
+    XCTAssertEqual(
+      store.fetchModelSamples(
+        tools: [.claude], from: Date.distantPast, to: Date.distantFuture
+      )
+      .map(\.recordedAt),
+      [priorRecordedAt])
+    XCTAssertEqual(
+      store.fetchMachineSamples(
+        tools: [.claude], from: Date.distantPast, to: Date.distantFuture
+      )
+      .map(\.recordedAt),
+      [priorRecordedAt])
+  }
+
+  func testSampleBreakdownDeltasUseRecordedAtIntervalAcrossTimezoneDateKeys() throws {
+    let store = try UsageStore(path: ":memory:")
+    let first = try XCTUnwrap(
+      ISO8601DateFormatter().date(from: "2026-08-22T01:30:00Z"))
+    let second = first.addingTimeInterval(60 * 10)
+    let oldContext = UsageDateContext(
+      now: first,
+      timeZone: try XCTUnwrap(TimeZone(identifier: "UTC")))
+    let newContext = UsageDateContext(
+      now: second,
+      timeZone: try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles")))
+
+    try store.insertSample(
+      tool: .claude, totalCost: 100, recordedAt: first, dateContext: oldContext)
+    try store.insertSample(
+      tool: .claude, totalCost: 110, recordedAt: second, dateContext: newContext)
+    try store.insertModelSample(
+      tool: .claude,
+      modelName: "model",
+      totalCost: 100,
+      recordedAt: first,
+      dateContext: oldContext)
+    try store.insertModelSample(
+      tool: .claude,
+      modelName: "model",
+      totalCost: 110,
+      recordedAt: second,
+      dateContext: newContext)
+    try store.insertMachineSample(
+      tool: .claude,
+      machineName: "machine",
+      totalCost: 100,
+      recordedAt: first,
+      dateContext: oldContext)
+    try store.insertMachineSample(
+      tool: .claude,
+      machineName: "machine",
+      totalCost: 110,
+      recordedAt: second,
+      dateContext: newContext)
+
+    XCTAssertEqual(
+      store.fetchSamples(tool: .claude, from: first, to: second).map(\.deltaCost),
+      [100, 10])
+    XCTAssertEqual(
+      store.fetchModelSamples(tools: [.claude], from: first, to: second).map(\.deltaCost),
+      [100, 10])
+    XCTAssertEqual(
+      store.fetchMachineSamples(tools: [.claude], from: first, to: second).map(\.deltaCost),
+      [100, 10])
+  }
+
+  func testDailyRollupReadsRespectInclusiveDateBounds() throws {
+    let store = try UsageStore(path: ":memory:")
+    let context = UsageDateContext(
+      now: try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-08-22T12:00:00Z")),
+      timeZone: try XCTUnwrap(TimeZone(identifier: "UTC")))
+    let totals = [
+      DailyTotal(
+        dateKey: "2026-07-01",
+        cost: 1,
+        modelBreakdowns: [DailyModelBreakdown(modelName: "model", cost: 1)],
+        machineBreakdowns: [DailyMachineBreakdown(machineName: "machine", cost: 1)]),
+      DailyTotal(
+        dateKey: "2026-07-02",
+        cost: 2,
+        modelBreakdowns: [DailyModelBreakdown(modelName: "model", cost: 2)],
+        machineBreakdowns: [DailyMachineBreakdown(machineName: "machine", cost: 2)]),
+      DailyTotal(
+        dateKey: "2026-07-03",
+        cost: 3,
+        modelBreakdowns: [DailyModelBreakdown(modelName: "model", cost: 3)],
+        machineBreakdowns: [DailyMachineBreakdown(machineName: "machine", cost: 3)]),
+    ]
+    try store.upsertDailyTotals(tool: .claude, totals: totals, dateContext: context)
+
+    XCTAssertEqual(
+      store.fetchDailyRollups(
+        since: "2026-07-02", through: "2026-07-02", timeZone: context.timeZone
+      )
+      .map(\.dateKey),
+      ["2026-07-02"])
+    XCTAssertEqual(
+      store.fetchModelDailyRollups(
+        since: "2026-07-02", through: "2026-07-02", tools: [.claude], timeZone: context.timeZone
+      )
+      .map(\.dateKey),
+      ["2026-07-02"])
+    XCTAssertEqual(
+      store.fetchMachineDailyRollups(
+        since: "2026-07-02", through: "2026-07-02", tools: [.claude], timeZone: context.timeZone
+      )
+      .map(\.dateKey),
+      ["2026-07-02"])
+  }
+
   func testStoreRoundTripsArbitraryAgentIdentifiers() throws {
     let store = try UsageStore(path: ":memory:")
     let agent = UsageAgent("future-agent")

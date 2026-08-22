@@ -14,32 +14,46 @@ final class UsageRefreshService: @unchecked Sendable {
     self.store = store
   }
 
-  func refresh(todayKey: String, sampleTime: Date) throws -> UsageRefreshResult {
-    let agents = try fetcher.discoverAgents().sorted()
+  func refresh(
+    context: UsageDateContext,
+    invalidateCurrentDay: Bool = false
+  ) throws -> UsageRefreshResult {
+    if invalidateCurrentDay {
+      try store.deleteCurrentDaySamples(using: context)
+    }
+
+    let agents = try fetcher.discoverAgents(using: context).sorted()
     var errors: [String] = []
 
     for agent in agents {
       do {
-        let totals = try fetcher.fetchDailyTotals(for: agent)
-        try store.upsertDailyTotals(tool: agent, totals: totals)
+        let totals = try fetcher.fetchDailyTotals(for: agent, using: context)
+        try store.upsertDailyTotals(
+          tool: agent,
+          totals: totals,
+          dateContext: context)
         if let todayTotal = totals.first(where: {
-          DateHelper.normalizedDateKey(from: $0.dateKey) == todayKey
+          DateHelper.normalizedDateKey(from: $0.dateKey, in: context.timeZone)
+            == context.todayKey
         }) {
           try store.insertSample(
             tool: agent,
             totalCost: todayTotal.cost,
-            recordedAt: sampleTime)
+            recordedAt: context.now,
+            dateContext: context)
           if let modelBreakdowns = todayTotal.modelBreakdowns {
             try store.insertModelSamplesForRefresh(
               tool: agent,
               modelBreakdowns: modelBreakdowns,
-              recordedAt: sampleTime)
+              recordedAt: context.now,
+              dateContext: context)
           }
           if let machineBreakdowns = todayTotal.machineBreakdowns {
             try store.insertMachineSamplesForRefresh(
               tool: agent,
               machineBreakdowns: machineBreakdowns,
-              recordedAt: sampleTime)
+              recordedAt: context.now,
+              dateContext: context)
           }
         }
       } catch {

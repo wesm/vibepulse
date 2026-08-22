@@ -14,10 +14,9 @@ final class UsageRefreshServiceTests: XCTestCase {
       ])
     let store = try UsageStore(path: ":memory:")
     let service = UsageRefreshService(fetcher: fetcher, store: store)
+    let context = testContext()
 
-    let result = try service.refresh(
-      todayKey: "2026-07-17",
-      sampleTime: Date(timeIntervalSince1970: 1_752_710_400))
+    let result = try service.refresh(context: context)
 
     XCTAssertEqual(result.discoveredAgents, [first, second].sorted())
     XCTAssertEqual(fetcher.requestedAgents, [first, second])
@@ -35,8 +34,9 @@ final class UsageRefreshServiceTests: XCTestCase {
       failingAgents: [failed])
     let store = try UsageStore(path: ":memory:")
     let service = UsageRefreshService(fetcher: fetcher, store: store)
+    let context = testContext()
 
-    let result = try service.refresh(todayKey: "2026-07-17", sampleTime: Date())
+    let result = try service.refresh(context: context)
 
     XCTAssertEqual(fetcher.requestedAgents, [failed, successful])
     XCTAssertEqual(store.dailyTotal(for: "2026-07-17", tool: successful), 3)
@@ -50,8 +50,37 @@ final class UsageRefreshServiceTests: XCTestCase {
     let service = UsageRefreshService(fetcher: fetcher, store: store)
 
     XCTAssertThrowsError(
-      try service.refresh(todayKey: "2026-07-17", sampleTime: Date()))
+      try service.refresh(context: testContext()))
     XCTAssertEqual(fetcher.requestedAgents, [])
+  }
+
+  func testRefreshInvalidatesCurrentDayBeforeImportingNewTotals() throws {
+    let agent = UsageAgent("future-agent")
+    let context = testContext()
+    let fetcher = StubUsageFetcher(
+      discoveredAgents: [agent],
+      totalsByAgent: [agent: [DailyTotal(dateKey: context.todayKey, cost: 7)]])
+    let store = try UsageStore(path: ":memory:")
+    try store.insertSample(
+      tool: agent,
+      totalCost: 100,
+      recordedAt: context.now,
+      dateContext: UsageDateContext(
+        now: context.now,
+        timeZone: TimeZone(identifier: "UTC")!))
+    let service = UsageRefreshService(fetcher: fetcher, store: store)
+
+    _ = try service.refresh(context: context, invalidateCurrentDay: true)
+
+    let samples = store.fetchSamples(
+      tool: agent, from: context.startOfToday, to: context.now)
+    XCTAssertEqual(samples.map(\.totalCost), [7])
+  }
+
+  private func testContext() -> UsageDateContext {
+    UsageDateContext(
+      now: ISO8601DateFormatter().date(from: "2026-07-17T12:00:00Z")!,
+      timeZone: TimeZone(identifier: "UTC")!)
   }
 }
 
@@ -73,6 +102,7 @@ private final class StubUsageFetcher: UsageFetching, @unchecked Sendable {
   private let failingAgents: Set<UsageAgent>
   private let discoveryError: Error?
   private(set) var requestedAgents: [UsageAgent] = []
+  private(set) var requestedTimeZones: [String] = []
 
   init(
     discoveredAgents: [UsageAgent] = [],
@@ -86,12 +116,16 @@ private final class StubUsageFetcher: UsageFetching, @unchecked Sendable {
     self.discoveryError = discoveryError
   }
 
-  func discoverAgents() throws -> [UsageAgent] {
+  func discoverAgents(using context: UsageDateContext) throws -> [UsageAgent] {
+    requestedTimeZones.append(context.timeZone.identifier)
     if let discoveryError { throw discoveryError }
     return discoveredAgents
   }
 
-  func fetchDailyTotals(for tool: UsageAgent) throws -> [DailyTotal] {
+  func fetchDailyTotals(for tool: UsageAgent, using context: UsageDateContext) throws
+    -> [DailyTotal]
+  {
+    requestedTimeZones.append(context.timeZone.identifier)
     requestedAgents.append(tool)
     if failingAgents.contains(tool) { throw StubError.importFailed }
     return totalsByAgent[tool] ?? []

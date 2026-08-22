@@ -5,12 +5,12 @@ enum HourlyUsageInferer {
     tool: UsageAgent,
     samples: [UsageSample],
     startOfDay: Date,
-    end: Date
+    end: Date,
+    calendar: Calendar = .autoupdatingCurrent
   ) -> [UsageSeriesPoint] {
     guard startOfDay < end else { return [] }
     guard !samples.isEmpty else { return [] }
 
-    let calendar = Calendar.current
     let endHour = calendar.component(.hour, from: end)
     var hourlyTotals = Array(repeating: 0.0, count: endHour + 1)
 
